@@ -12,6 +12,7 @@ PYTHON_DIR = ROOT / "python"
 sys.path.insert(0, str(PYTHON_DIR))
 
 from comsol_opt.config_io import load_config
+from comsol_opt.flow import prepare_parameter_txt_set
 from comsol_opt.loss import compute_loss_from_rows
 from comsol_opt.parameter_txt import ParameterTxtSet
 
@@ -153,6 +154,20 @@ class ConfigTests(unittest.TestCase):
         flow = load_config(ROOT / "configs" / "flow.yaml")
         self.assertEqual(flow["steps"][0]["id"], "S00")
         self.assertEqual(flow["steps"][-1]["id"], "S10")
+
+    def test_default_paths_are_flattened(self):
+        flow = load_config(ROOT / "configs" / "flow.yaml")
+        template_paths = []
+        for section in flow["templates"].values():
+            template_paths.extend(section.values())
+        self.assertTrue(template_paths)
+        self.assertTrue(all(path.startswith("models/") for path in template_paths))
+        self.assertTrue(all("models/templates/" not in path for path in template_paths))
+
+        txt_set = prepare_parameter_txt_set(ROOT)
+        self.assertEqual(txt_set.files["struct"], ROOT / "params" / "struct.txt")
+        self.assertEqual(txt_set.files["stress"], ROOT / "params" / "stress.txt")
+        self.assertEqual(txt_set.files["temp"], ROOT / "params" / "temp.txt")
 
 
 if __name__ == "__main__":

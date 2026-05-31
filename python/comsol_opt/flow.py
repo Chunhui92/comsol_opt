@@ -9,9 +9,9 @@ from .state import initial_state
 
 
 DEFAULT_PARAM_TXT_FILES = {
-    "struct": "params/comsol/struct.txt",
-    "stress": "params/comsol/stress.txt",
-    "temp": "params/comsol/temp.txt",
+    "struct": "params/struct.txt",
+    "stress": "params/stress.txt",
+    "temp": "params/temp.txt",
 }
 
 DEFAULT_PARAM_TXT_MAPPINGS = {

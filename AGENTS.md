@@ -55,9 +55,9 @@ python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trial
 - `configs/params_nominal.yaml`: nominal process/material/geometry parameters.
 - `configs/calibration_space.yaml`: parameter bounds for staged/global calibration.
 - `configs/template_tags.yaml`: assumed COMSOL study/evaluation tags.
-- `params/comsol/struct.txt`: COMSOL structural parameter file.
-- `params/comsol/stress.txt`: COMSOL stress/release parameter file.
-- `params/comsol/temp.txt`: COMSOL temperature parameter file.
+- `params/struct.txt`: COMSOL structural parameter file.
+- `params/stress.txt`: COMSOL stress/release parameter file.
+- `params/temp.txt`: COMSOL temperature parameter file.
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.

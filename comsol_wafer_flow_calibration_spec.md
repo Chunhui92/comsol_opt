@@ -131,7 +131,7 @@ mat3 ← device2_for_mat3
 建议第一版维护：
 
 ```text
-models/templates/
+models/
     device_onon_template.mph
     device_trench_template.mph
     device_pillar_template.mph
@@ -479,15 +479,15 @@ project/
 
   "templates": {
     "devices": {
-      "device_default": "models/templates/device_final_template.mph",
-      "device2_for_mat3": "models/templates/device2_mat3_template.mph"
+      "device_default": "models/device_final_template.mph",
+      "device2_for_mat3": "models/device2_mat3_template.mph"
     },
     "mats": {
-      "mat1": "models/templates/mat1_template.mph",
-      "mat2": "models/templates/mat2_template.mph",
-      "mat3": "models/templates/mat3_template.mph"
+      "mat1": "models/mat1_template.mph",
+      "mat2": "models/mat2_template.mph",
+      "mat3": "models/mat3_template.mph"
     },
-    "wafer": "models/templates/wafer_base_template.mph"
+    "wafer": "models/wafer_base_template.mph"
   },
 
   "run_devices": [
@@ -537,20 +537,20 @@ flow_name: wafer_warpage_flow_v1
 
 templates:
   devices:
-    device_onon: "models/templates/device_onon_template.mph"
-    device_trench: "models/templates/device_trench_template.mph"
-    device_pillar: "models/templates/device_pillar_template.mph"
-    device_final: "models/templates/device_final_template.mph"
-    device2_mat3: "models/templates/device2_mat3_template.mph"
+    device_onon: "models/device_onon_template.mph"
+    device_trench: "models/device_trench_template.mph"
+    device_pillar: "models/device_pillar_template.mph"
+    device_final: "models/device_final_template.mph"
+    device2_mat3: "models/device2_mat3_template.mph"
 
   mats:
-    mat1: "models/templates/mat1_template.mph"
-    mat2: "models/templates/mat2_template.mph"
-    mat3: "models/templates/mat3_template.mph"
+    mat1: "models/mat1_template.mph"
+    mat2: "models/mat2_template.mph"
+    mat3: "models/mat3_template.mph"
 
   wafers:
-    base: "models/templates/wafer_base_template.mph"
-    with_asi: "models/templates/wafer_with_asi_template.mph"
+    base: "models/wafer_base_template.mph"
+    with_asi: "models/wafer_with_asi_template.mph"
 
 steps:
   - id: S00
