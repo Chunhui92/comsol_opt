@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from .backends import make_backend
-from .config_io import dump_json, load_config
+from .config_io import dump_data, load_config
 from .flow import run_flow
 from .loss import compute_loss_from_rows, load_summary_rows
 from .params import copy_params, flatten_params, set_param
@@ -174,7 +174,7 @@ def run_staged_calibration(
             )
 
         current_params = stage_result["params"]
-        dump_json(stage_dir / "best_params.yaml", current_params)
+        dump_data(stage_dir / "best_params.yaml", current_params)
         shutil.copyfile(stage_result["summary"], stage_dir / "best_summary.csv")
         all_history.extend(stage_result["history"])
         _write_history(stage_dir / "calibration_history.csv", stage_result["history"])
@@ -183,7 +183,7 @@ def run_staged_calibration(
             [f"best_trial={stage_result['trial']}", f"best_loss={stage_result['loss']}"],
         )
 
-    dump_json(out_dir / "final_params.yaml", current_params)
+    dump_data(out_dir / "final_params.yaml", current_params)
     _write_history(out_dir / "calibration_history.csv", all_history)
     return {"calib_dir": calib_dir, "completed_stages": len(groups), "final_params": current_params}
 
@@ -274,7 +274,7 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
     trial_dir = trials_root / f"trial_{trial_index:04d}"
     trial_dir.mkdir(parents=True, exist_ok=True)
     params_file = trial_dir / "params_trial.yaml"
-    dump_json(params_file, params)
+    dump_data(params_file, params)
     result = run_flow(
         flow_path=flow_path,
         params_path=params_file,
@@ -285,6 +285,7 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
         repo_root=repo_root,
         use_cache=True,
         parameter_map_path=None,
+        cache_root=stage_dir / ".cache",
     )
     summary_path = result["run_dir"] / "summary.csv"
     bow_loss = loss_for_stage(summary_path, target_step)
@@ -320,7 +321,7 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
         trial_dir = trials_root / f"trial_{trial_index:04d}"
         trial_dir.mkdir(parents=True, exist_ok=True)
         params_file = trial_dir / "params_trial.yaml"
-        dump_json(params_file, params)
+        dump_data(params_file, params)
         backend = make_backend(backend_name)
         result = run_flow(
             flow_path=flow_path,
@@ -332,6 +333,7 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
             repo_root=repo_root,
             use_cache=True,
             parameter_map_path=None,
+            cache_root=calib_dir / ".cache",
         )
         summary_path = result["run_dir"] / "summary.csv"
         bow_loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
@@ -350,7 +352,7 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
             best = {"loss": loss, "params": params, "summary": summary_path, "trial": trial_index}
 
     _write_history(calib_dir / "calibration_history.csv", history)
-    dump_json(calib_dir / "best_params.yaml", best["params"])
+    dump_data(calib_dir / "best_params.yaml", best["params"])
     shutil.copyfile(best["summary"], calib_dir / "best_summary.csv")
     return {"calib_dir": calib_dir, "best_loss": best["loss"], "best_trial": best["trial"]}
 
@@ -402,7 +404,7 @@ def run_optuna_or_fallback_calibration(
         trial_dir = trials_root / f"trial_{trial.number:04d}"
         trial_dir.mkdir(parents=True, exist_ok=True)
         params_file = trial_dir / "params_trial.yaml"
-        dump_json(params_file, params)
+        dump_data(params_file, params)
         result = run_flow(
             flow_path=flow_path,
             params_path=params_file,
@@ -413,6 +415,7 @@ def run_optuna_or_fallback_calibration(
             repo_root=repo_root,
             use_cache=True,
             parameter_map_path=None,
+            cache_root=calib_dir / ".cache",
         )
         summary_path = result["run_dir"] / "summary.csv"
         bow_loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
@@ -438,7 +441,7 @@ def run_optuna_or_fallback_calibration(
     study.enqueue_trial({spec["key"]: nominal[spec["key"]] for spec in specs})
     study.optimize(objective, n_trials=n_trials)
     _write_history(calib_dir / "calibration_history.csv", history)
-    dump_json(calib_dir / "best_params.yaml", best["params"])
+    dump_data(calib_dir / "best_params.yaml", best["params"])
     shutil.copyfile(best["summary"], calib_dir / "best_summary.csv")
     return {"calib_dir": calib_dir, "best_loss": best["loss"], "best_trial": best["trial"]}
 

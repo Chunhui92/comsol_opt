@@ -1,7 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
-from .config_io import dump_json, load_json
+from .config_io import dump_data, load_json
 from .process import apply_process_update
 from .rve import make_rve, validate_rve
 from .schemas import StepInput, WaferState
@@ -35,14 +35,23 @@ def run_mock_step(step_input_path):
         validate_rve(mat_rve, mat_name)
         state_out["wafer_inputs"][mat_name] = mat_rve
 
-    wafer_result = mock_wafer_result(state_out, step_input)
-    state_out["wafer_result"] = wafer_result
-    append_history(state_out, step_input["step_id"], step_input["step_name"], wafer_result)
+    wafer_skipped = not step_input.get("run_wafer", True)
+    if wafer_skipped:
+        wafer_result = state_out["wafer_result"]
+    else:
+        wafer_result = mock_wafer_result(state_out, step_input)
+        state_out["wafer_result"] = wafer_result
+        append_history(state_out, step_input["step_id"], step_input["step_name"], wafer_result)
 
     output_dir = Path(step_input["output_dir"])
-    dump_json(output_dir / "state_out.json", state_out)
-    result = {"status": "success", "step_id": step_input["step_id"], "wafer_result": wafer_result}
-    dump_json(output_dir / "step_result.json", result)
+    dump_data(output_dir / "state_out.json", state_out)
+    result = {
+        "status": "success",
+        "step_id": step_input["step_id"],
+        "wafer_result": wafer_result,
+        "wafer_skipped": wafer_skipped,
+    }
+    dump_data(output_dir / "step_result.json", result)
     return result
 
 

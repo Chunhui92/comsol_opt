@@ -26,6 +26,13 @@
 7. 每一步没有重新计算的 RVE 结果，应从上一步 `state_out.json` 继承。
 8. 每一步实验均有 `bow_x_um` 和 `bow_y_um`，需要用于分阶段和全局校准。
 
+当前实现补充：
+
+- `configs/flow.yaml` 现在通过顶层 `wafer_slots` 声明所有 wafer 输入槽位；每个 step 只维护 `wafer_inputs.update`，`wafer_inputs.inherit` 由 `step_input.py` 自动生成。
+- staged/global calibration 使用共享 cache：分步校准在 `runs/<run-id>/out/<step>_<group>/.cache`，全局校准在 `runs/<run-id>/.cache`。
+- `run_wafer: false` 表示跳过 wafer 求解，保留输入状态中的 `wafer_result`，并在 `step_result.json` 写入 `wafer_skipped: true`。
+- 后续路线图维护在 `docs/roadmap.md`。
+
 ---
 
 ## 1. 工艺链路定义

@@ -43,7 +43,9 @@ public class ComsolStepWorker {
             matResults.put(matName, rve);
         }
 
-        WaferResult wafer = runWaferModel(input.templatesWafer, input.parameterFiles);
+        WaferResult wafer = input.runWafer
+            ? runWaferModel(input.templatesWafer, input.parameterFiles)
+            : WaferResult.skipped();
         writeWorkerOutputs(input, deviceResults, matResults, wafer);
     }
 
@@ -117,7 +119,8 @@ public class ComsolStepWorker {
         String stepResult = "{\n"
             + "  \"status\": \"success\",\n"
             + "  \"step_id\": " + json(input.stepId) + ",\n"
-            + "  \"wafer_result\": " + wafer.toJson() + "\n"
+            + "  \"wafer_result\": " + wafer.toJson() + ",\n"
+            + "  \"wafer_skipped\": " + !input.runWafer + "\n"
             + "}\n";
         Files.writeString(input.outputDir.resolve("step_result.json"), stepResult, StandardCharsets.UTF_8);
 
@@ -160,6 +163,7 @@ public class ComsolStepWorker {
         final String stepId;
         final String stepName;
         final String templatesWafer;
+        final boolean runWafer;
         final Path outputDir;
         final List<Path> parameterFiles;
         final List<ModelRun> devices;
@@ -170,6 +174,7 @@ public class ComsolStepWorker {
             String stepId,
             String stepName,
             String templatesWafer,
+            boolean runWafer,
             Path outputDir,
             List<Path> parameterFiles,
             List<ModelRun> devices,
@@ -179,6 +184,7 @@ public class ComsolStepWorker {
             this.stepId = stepId;
             this.stepName = stepName;
             this.templatesWafer = templatesWafer;
+            this.runWafer = runWafer;
             this.outputDir = outputDir;
             this.parameterFiles = parameterFiles;
             this.devices = devices;
@@ -198,6 +204,7 @@ public class ComsolStepWorker {
                 stringValue(text, "step_id"),
                 stringValue(text, "step_name"),
                 stringValue(text, "wafer"),
+                booleanValue(text, "run_wafer"),
                 Path.of(stringValue(text, "output_dir")),
                 parameterFiles,
                 parseDevices(text),
@@ -269,6 +276,14 @@ public class ComsolStepWorker {
         return matcher.group(1);
     }
 
+    private static boolean booleanValue(String text, String key) {
+        Matcher matcher = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*(true|false)").matcher(text);
+        if (!matcher.find()) {
+            throw new IllegalArgumentException("Missing JSON boolean key: " + key);
+        }
+        return Boolean.parseBoolean(matcher.group(1));
+    }
+
     private static final class RveResult {
         String sourceStep = "";
         String sourceModel = "";
@@ -317,6 +332,10 @@ public class ComsolStepWorker {
 
         String toJson() {
             return "{\"bow_x_um\":" + bowX + ",\"bow_y_um\":" + bowY + ",\"kx\":" + kx + ",\"ky\":" + ky + "}";
+        }
+
+        static WaferResult skipped() {
+            return new WaferResult(0.0, 0.0, 0.0, 0.0);
         }
     }
 

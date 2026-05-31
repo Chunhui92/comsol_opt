@@ -1,6 +1,25 @@
 from .rve import make_rve
 
 
+VALID_UPDATE_RULES = {
+    "init",
+    "onon_deposition",
+    "onon_trench_release",
+    "dpillar_onon_release",
+    "mat_remove_onon_release",
+    "final",
+    "trench_ox_fill",
+    "pillar_diameter_update",
+    "pillar_dep1",
+    "pillar_dep2",
+    "pillar_dep3",
+    "pillar_dep4",
+    "pillar_dep5",
+    "asi_deposition",
+    "w_fill",
+}
+
+
 def apply_process_update(step_input, state):
     params = step_input["parameters"]
     rule = step_input["update_rule"]
@@ -47,6 +66,8 @@ def apply_process_update(step_input, state):
         state["wafer_inputs"]["aSi_layer"] = make_rve(step_id, "wafer_direct", sigx=sigma, sigy=0.92 * sigma, rho=2300.0, active=True)
     elif rule == "w_fill":
         mat["W"]["sigma_fill"] = params["W"]["sigma_fill"]
+    else:
+        raise ValueError(f"Unknown update_rule: {rule}")
 
 
 def _release_onon(step_id, state, key, factor):

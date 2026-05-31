@@ -11,10 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_DIR = ROOT / "python"
 sys.path.insert(0, str(PYTHON_DIR))
 
-from comsol_opt.config_io import load_config
-from comsol_opt.flow import prepare_parameter_txt_set
+from comsol_opt.config_io import dump_data, load_config, load_json
+from comsol_opt.flow import prepare_parameter_txt_set, run_flow
 from comsol_opt.calibration import parameter_regularization_loss
 from comsol_opt.loss import compute_loss_from_rows
+from comsol_opt.backends import make_backend
 from comsol_opt.parameter_txt import ParameterTxtSet
 from comsol_opt.schemas import RveResult, StepInput, WaferState
 
@@ -197,6 +198,52 @@ class WorkflowIntegrationTests(unittest.TestCase):
             g1_log = (g1 / "stage.log").read_text(encoding="utf-8")
             self.assertIn("stage=G1_ONON_base", g1_log)
             self.assertIn("params=ONON.sigma_O_base,ONON.sigma_N_base", g1_log)
+            self.assertTrue((g1 / ".cache").exists())
+            self.assertFalse((g1 / "trials" / "trial_0000" / "flow" / ".cache").exists())
+
+    def test_mock_flow_can_skip_wafer_solve_and_preserve_previous_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow = load_config(ROOT / "configs" / "flow.yaml")
+            flow["steps"] = [dict(flow["steps"][0])]
+            flow["steps"][0]["run_wafer"] = False
+            flow_path = root / "flow.yaml"
+            dump_data(flow_path, flow)
+            result = run_flow(
+                flow_path=flow_path,
+                params_path=ROOT / "configs" / "params_nominal.yaml",
+                experiment_path=ROOT / "exp" / "bow_experiment.csv",
+                backend=make_backend("mock"),
+                run_id="skip_wafer",
+                runs_root=root / "runs",
+                repo_root=ROOT,
+            )
+
+            step_dir = result["run_dir"] / "S00"
+            state = load_json(step_dir / "state_out.json")
+            step_result = load_json(step_dir / "step_result.json")
+            self.assertEqual(state["wafer_result"]["bow_x_um"], 0.0)
+            self.assertEqual(state["history"], [])
+            self.assertTrue(step_result["wafer_skipped"])
+
+    def test_mock_flow_rejects_unknown_process_update_rule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow = load_config(ROOT / "configs" / "flow.yaml")
+            flow["steps"] = [dict(flow["steps"][0])]
+            flow["steps"][0]["update_rule"] = "unknown_rule"
+            flow_path = root / "flow.yaml"
+            dump_data(flow_path, flow)
+            with self.assertRaises(ValueError):
+                run_flow(
+                    flow_path=flow_path,
+                    params_path=ROOT / "configs" / "params_nominal.yaml",
+                    experiment_path=ROOT / "exp" / "bow_experiment.csv",
+                    backend=make_backend("mock"),
+                    run_id="bad_rule",
+                    runs_root=root / "runs",
+                    repo_root=ROOT,
+                )
 
 
 class ConfigTests(unittest.TestCase):
@@ -215,6 +262,29 @@ class ConfigTests(unittest.TestCase):
             if len(line) > 120
         ]
         self.assertEqual(long_lines, [])
+
+    def test_flow_generates_inherit_from_global_wafer_slots(self):
+        import comsol_opt.step_input as step_input
+
+        flow = load_config(ROOT / "configs" / "flow.yaml")
+        self.assertEqual(flow["wafer_slots"], ["FEOL", "mat1", "mat2", "mat3", "ONON_layer", "aSi_layer"])
+        self.assertTrue(all("inherit" not in step["wafer_inputs"] for step in flow["steps"]))
+
+        step = flow["steps"][3]
+        generated = step_input.build_step_input(
+            step,
+            flow,
+            load_config(ROOT / "configs" / "params_nominal.yaml"),
+            ROOT / "state.json",
+            ROOT / "out",
+            {
+                "struct": ROOT / "params" / "struct.txt",
+                "stress": ROOT / "params" / "stress.txt",
+                "temp": ROOT / "params" / "temp.txt",
+            },
+        )
+        self.assertEqual(generated["wafer_inputs"]["update"], ["mat2"])
+        self.assertEqual(generated["wafer_inputs"]["inherit"], ["FEOL", "mat1", "mat3", "ONON_layer", "aSi_layer"])
 
     def test_default_paths_are_flattened(self):
         flow = load_config(ROOT / "configs" / "flow.yaml")
@@ -266,6 +336,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn(".run()", text)
         self.assertIn("gev1", text)
         self.assertIn("gmevescp2", text)
+        self.assertIn("run_wafer", text)
 
     def test_flow_responsibilities_are_split_into_focused_modules(self):
         import comsol_opt.flow_runner as flow_runner
@@ -275,6 +346,16 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(callable(flow_runner.run_flow))
         self.assertTrue(callable(step_input.build_step_input))
         self.assertTrue(callable(summary.write_summary))
+
+    def test_config_io_exposes_generic_dump_data_for_yaml_and_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            yaml_path = root / "data.yaml"
+            json_path = root / "data.json"
+            dump_data(yaml_path, {"b": 2, "a": 1})
+            dump_data(json_path, {"b": 2, "a": 1})
+            self.assertEqual(load_config(yaml_path), {"a": 1, "b": 2})
+            self.assertEqual(load_json(json_path), {"a": 1, "b": 2})
 
     def test_schema_validation_rejects_incomplete_rve_and_step_input(self):
         valid_rve = RveResult.from_dict(

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from .cache_manager import StepCache
-from .config_io import dump_json, load_config
+from .config_io import dump_data, load_config
 from .parameter_txt import ParameterTxtSet
 from .params import flatten_params
 from .state import initial_state
@@ -35,6 +35,7 @@ def run_flow(
     repo_root,
     use_cache=False,
     parameter_map_path=None,
+    cache_root=None,
 ):
     flow = load_config(flow_path)
     params = load_config(params_path)
@@ -43,11 +44,11 @@ def run_flow(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     initial_path = run_dir / "_initial_state.json"
-    dump_json(initial_path, initial_state(params))
+    dump_data(initial_path, initial_state(params))
     state_in_path = initial_path
 
     txt_set = prepare_parameter_txt_set(repo_root, parameter_map_path)
-    cache = StepCache(run_dir / ".cache") if use_cache else None
+    cache = StepCache(cache_root or run_dir / ".cache") if use_cache else None
     completed = 0
     for step in flow["steps"]:
         step_dir = run_dir / step["id"]
@@ -55,7 +56,7 @@ def run_flow(
         parameter_txt_paths = txt_set.write_trial_files(step_dir / "parameters", flatten_params(params))
         step_input = build_step_input(step, flow, params, state_in_path, step_dir, parameter_txt_paths)
         step_input_path = step_dir / "step_input.json"
-        dump_json(step_input_path, step_input)
+        dump_data(step_input_path, step_input)
         result = None
         if cache is not None and backend.__class__.__name__ != "DryRunBackend":
             cache_key = cache.key_for(step_input_path)

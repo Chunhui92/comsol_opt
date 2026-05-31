@@ -91,6 +91,9 @@ Keep parameter routing in `configs/parameter_map.yaml`. Keep calibration bounds,
 - `mat1` and `mat2` use `device_default`.
 - `mat3` uses `device2_for_mat3`.
 - If a step does not update a wafer input slot, inherit it from the previous `state_out.json`.
+- `configs/flow.yaml` declares `wafer_slots` once; steps should normally list only `wafer_inputs.update`.
+- `step_input.py` computes `wafer_inputs.inherit` from `wafer_slots` before writing `step_input.json`.
+- If `run_wafer` is false, the backend should preserve the incoming `wafer_result`, skip history append, and set `wafer_skipped=true`.
 - `ONON.sigma_O_base` and `ONON.sigma_N_base` are only set at S01.
 - Later O/N changes use release factors only.
 - S07 uses `wafer_with_asi_template.mph`.
@@ -114,10 +117,17 @@ The Java COMSOL worker must output the same JSON shape as the mock backend.
 
 Staged calibration writes under `runs/<run-id>/out/<step>_<group>/`. Each stage must contain `stage.log`, per-trial flow outputs, `calibration_history.csv`, `best_params.yaml`, and `best_summary.csv`. Later stages must start from the previous stage's best params.
 
+Stage trials share cache entries through `runs/<run-id>/out/<step>_<group>/.cache`. Global calibration uses `runs/<run-id>/.cache`. Do not put caches under individual trial flow directories unless deliberately debugging cache isolation.
+
+## Current Roadmap
+
+Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are COMSOL calibration command plumbing, complete Java worker state inheritance, and start/stop checkpointed staged reruns.
+
 ## Development Rules
 
 - Use standard library compatibility where practical. Tests currently do not require `pytest`.
 - `PyYAML` is required because project configuration files use real YAML syntax.
 - If `Optuna` is absent, calibration falls back to deterministic random search.
 - Before reporting completion, run `python3 -m unittest tests/test_workflow.py -v`.
+- Use `dump_data` for new JSON/YAML writes. `dump_json` remains only as a compatibility alias.
 - Keep generated run outputs under `runs/` or `/private/tmp`; do not commit generated run directories.

@@ -1,4 +1,11 @@
 flow_name: wafer_warpage_flow_v1
+wafer_slots:
+- FEOL
+- mat1
+- mat2
+- mat3
+- ONON_layer
+- aSi_layer
 templates:
   devices:
     device_onon: models/device_onon_template.mph
@@ -26,12 +33,6 @@ steps:
   wafer_inputs:
     update:
     - FEOL
-    inherit:
-    - mat1
-    - mat2
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G0_init
   experiment_step: S00
 - id: S01
@@ -48,12 +49,6 @@ steps:
   wafer_inputs:
     update:
     - ONON_layer
-    inherit:
-    - FEOL
-    - mat1
-    - mat2
-    - mat3
-    - aSi_layer
   calibration_group: G1_ONON_base
   experiment_step: S01
 - id: S02
@@ -73,11 +68,6 @@ steps:
     update:
     - mat1
     - ONON_layer
-    inherit:
-    - FEOL
-    - mat2
-    - mat3
-    - aSi_layer
   calibration_group: G2_trench_release
   experiment_step: S02
 - id: S03
@@ -94,12 +84,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G3_ox_fill
   experiment_step: S03
 - id: S04
@@ -126,10 +110,6 @@ steps:
     - mat1
     - mat2
     - mat3
-    inherit:
-    - FEOL
-    - ONON_layer
-    - aSi_layer
   calibration_group: G4_pillar_diameter
   experiment_step: S04
 - id: S05a
@@ -146,12 +126,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G5_dep1
   experiment_step: S05a
 - id: S05b
@@ -168,12 +142,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G5_dep2
   experiment_step: S05b
 - id: S05c
@@ -190,12 +158,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G5_dep3
   experiment_step: S05c
 - id: S05d
@@ -212,12 +174,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G5_dep4
   experiment_step: S05d
 - id: S05e
@@ -234,12 +190,6 @@ steps:
   wafer_inputs:
     update:
     - mat2
-    inherit:
-    - FEOL
-    - mat1
-    - mat3
-    - ONON_layer
-    - aSi_layer
   calibration_group: G5_dep5
   experiment_step: S05e
 - id: S06
@@ -267,9 +217,6 @@ steps:
     - mat2
     - mat3
     - ONON_layer
-    inherit:
-    - FEOL
-    - aSi_layer
   calibration_group: G6_dpillar_release
   experiment_step: S06
 - id: S07
@@ -284,12 +231,6 @@ steps:
   wafer_inputs:
     update:
     - aSi_layer
-    inherit:
-    - FEOL
-    - mat1
-    - mat2
-    - mat3
-    - ONON_layer
   calibration_group: G7_aSi
   experiment_step: S07
 - id: S08
@@ -318,8 +259,6 @@ steps:
     - mat3
     - ONON_layer
     - aSi_layer
-    inherit:
-    - FEOL
   calibration_group: G8_mat_remove
   experiment_step: S08
 - id: S09
@@ -346,10 +285,6 @@ steps:
     - mat1
     - mat2
     - mat3
-    inherit:
-    - FEOL
-    - ONON_layer
-    - aSi_layer
   calibration_group: G9_W_fill
   experiment_step: S09
 - id: S10
@@ -376,9 +311,5 @@ steps:
     - mat1
     - mat2
     - mat3
-    inherit:
-    - FEOL
-    - ONON_layer
-    - aSi_layer
   calibration_group: G10_final
   experiment_step: S10
