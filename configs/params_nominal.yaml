@@ -1,53 +1,37 @@
-{
-  "FEOL": {
-    "sigma_init_x": 180000000.0,
-    "sigma_init_y": 160000000.0
-  },
-  "ONON": {
-    "sigma_O_base": 100000000.0,
-    "sigma_N_base": -300000000.0
-  },
-  "release": {
-    "trench_etch_ONON": 0.75,
-    "dpillar_form_ONON": 0.8,
-    "mat_remove_ONON": 0.7,
-    "final_ONON": 1.0
-  },
-  "Ox": {
-    "sigma_trench_fill": 120000000.0
-  },
-  "pillar_dep": {
-    "dep1": {
-      "material": "dep1_material",
-      "sigma_init": 100000000.0
-    },
-    "dep2": {
-      "material": "dep2_material",
-      "sigma_init": -150000000.0
-    },
-    "dep3": {
-      "material": "dep3_material",
-      "sigma_init": 200000000.0
-    },
-    "dep4": {
-      "material": "dep4_material",
-      "sigma_init": -80000000.0
-    },
-    "dep5": {
-      "material": "dep5_material",
-      "sigma_init": 120000000.0
-    }
-  },
-  "aSi": {
-    "sigma": -150000000.0
-  },
-  "W": {
-    "sigma_fill": 500000000.0
-  },
-  "geometry": {
-    "pillar_diameter": 1.2e-7
-  },
-  "process": {
-    "temperature_C": 25.0
-  }
-}
+FEOL:
+  sigma_init_x: 180000000.0
+  sigma_init_y: 160000000.0
+ONON:
+  sigma_O_base: 100000000.0
+  sigma_N_base: -300000000.0
+release:
+  trench_etch_ONON: 0.75
+  dpillar_form_ONON: 0.8
+  mat_remove_ONON: 0.7
+  final_ONON: 1.0
+Ox:
+  sigma_trench_fill: 120000000.0
+pillar_dep:
+  dep1:
+    material: dep1_material
+    sigma_init: 100000000.0
+  dep2:
+    material: dep2_material
+    sigma_init: -150000000.0
+  dep3:
+    material: dep3_material
+    sigma_init: 200000000.0
+  dep4:
+    material: dep4_material
+    sigma_init: -80000000.0
+  dep5:
+    material: dep5_material
+    sigma_init: 120000000.0
+aSi:
+  sigma: -150000000.0
+W:
+  sigma_fill: 500000000.0
+geometry:
+  pillar_diameter: 1.2e-07
+process:
+  temperature_C: 25.0

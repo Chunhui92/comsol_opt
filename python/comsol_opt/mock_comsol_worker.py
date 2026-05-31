@@ -4,12 +4,15 @@ from pathlib import Path
 from .config_io import dump_json, load_json
 from .process import apply_process_update
 from .rve import make_rve, validate_rve
+from .schemas import StepInput, WaferState
 from .state import append_history
 
 
 def run_mock_step(step_input_path):
     step_input = load_json(step_input_path)
+    StepInput.from_dict(step_input)
     state_in = load_json(step_input["state_in"])
+    WaferState.from_dict(state_in)
     state_out = deepcopy(state_in)
     state_out["step_id"] = step_input["step_id"]
     state_out["step_name"] = step_input["step_name"]
@@ -105,4 +108,3 @@ def mock_wafer_result(state, step_input):
         "kx": bow_x * 1e-5,
         "ky": bow_y * 1e-5,
     }
-

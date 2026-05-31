@@ -16,6 +16,7 @@ from comsol_opt.flow import prepare_parameter_txt_set
 from comsol_opt.calibration import parameter_regularization_loss
 from comsol_opt.loss import compute_loss_from_rows
 from comsol_opt.parameter_txt import ParameterTxtSet
+from comsol_opt.schemas import RveResult, StepInput, WaferState
 
 
 class ParameterTxtSetTests(unittest.TestCase):
@@ -189,10 +190,8 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertTrue((g1 / "best_params.yaml").exists())
             self.assertTrue((calib_dir / "out" / "final_params.yaml").exists())
 
-            g0_params = json.loads((g0 / "best_params.yaml").read_text(encoding="utf-8"))
-            g1_trial_params = json.loads(
-                (g1 / "trials" / "trial_0000" / "params_trial.yaml").read_text(encoding="utf-8")
-            )
+            g0_params = load_config(g0 / "best_params.yaml")
+            g1_trial_params = load_config(g1 / "trials" / "trial_0000" / "params_trial.yaml")
             self.assertEqual(g1_trial_params["FEOL"], g0_params["FEOL"])
 
             g1_log = (g1 / "stage.log").read_text(encoding="utf-8")
@@ -201,10 +200,21 @@ class WorkflowIntegrationTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    def test_default_flow_config_loads_without_pyyaml(self):
+    def test_default_flow_config_loads_as_yaml(self):
         flow = load_config(ROOT / "configs" / "flow.yaml")
         self.assertEqual(flow["steps"][0]["id"], "S00")
         self.assertEqual(flow["steps"][-1]["id"], "S10")
+
+    def test_config_files_are_real_yaml_and_flow_is_readable(self):
+        for path in (ROOT / "configs").glob("*.yaml"):
+            text = path.read_text(encoding="utf-8")
+            self.assertFalse(text.lstrip().startswith("{"), path.name)
+        long_lines = [
+            (index + 1, len(line))
+            for index, line in enumerate((ROOT / "configs" / "flow.yaml").read_text(encoding="utf-8").splitlines())
+            if len(line) > 120
+        ]
+        self.assertEqual(long_lines, [])
 
     def test_default_paths_are_flattened(self):
         flow = load_config(ROOT / "configs" / "flow.yaml")
@@ -256,6 +266,60 @@ class ConfigTests(unittest.TestCase):
         self.assertIn(".run()", text)
         self.assertIn("gev1", text)
         self.assertIn("gmevescp2", text)
+
+    def test_flow_responsibilities_are_split_into_focused_modules(self):
+        import comsol_opt.flow_runner as flow_runner
+        import comsol_opt.step_input as step_input
+        import comsol_opt.summary as summary
+
+        self.assertTrue(callable(flow_runner.run_flow))
+        self.assertTrue(callable(step_input.build_step_input))
+        self.assertTrue(callable(summary.write_summary))
+
+    def test_schema_validation_rejects_incomplete_rve_and_step_input(self):
+        valid_rve = RveResult.from_dict(
+            {
+                "valid": True,
+                "active": True,
+                "source_step": "S01",
+                "source_model": "model",
+                "rho": 1.0,
+                "stress_eff": {"sxx": 1.0, "syy": 2.0},
+                "D": [[0.0] * 6 for _ in range(6)],
+                "meta": {},
+            }
+        )
+        self.assertEqual(valid_rve.source_step, "S01")
+        valid_state = WaferState.from_dict(
+            {
+                "step_id": "S01",
+                "step_name": "step",
+                "wafer_result": {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0},
+                "device_rves": {"device_default": valid_rve_dict()},
+                "wafer_inputs": {"mat1": valid_rve_dict()},
+                "materials_state": {},
+                "geometry_state": {},
+                "history": [],
+            }
+        )
+        self.assertEqual(valid_state.step_id, "S01")
+        with self.assertRaises(ValueError):
+            RveResult.from_dict({"D": [[0.0]]})
+        with self.assertRaises(ValueError):
+            StepInput.from_dict({"step_id": "S00"})
+
+
+def valid_rve_dict():
+    return {
+        "valid": True,
+        "active": True,
+        "source_step": "S01",
+        "source_model": "model",
+        "rho": 1.0,
+        "stress_eff": {"sxx": 1.0, "syy": 2.0},
+        "D": [[0.0] * 6 for _ in range(6)],
+        "meta": {},
+    }
 
 
 if __name__ == "__main__":

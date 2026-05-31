@@ -1,22 +1,46 @@
-{
-  "defaults": {
-    "study_tag": "std1",
-    "stress_eval_tag": "gev1",
-    "rho_eval_tag": "gev_rho",
-    "matrix_group_tag": "solidcp2stdEg",
-    "matrix_eval_tag": "gmevescp2",
-    "wafer_bow_eval_tag": "gev_bow"
-  },
-  "templates": {
-    "device_onon": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "device_trench": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "device_pillar": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "device_final": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "device2_mat3": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "mat1": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "mat2": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "mat3": {"study_tag": "std1", "stress_eval_tag": "gev1", "matrix_eval_tag": "gmevescp2"},
-    "wafer_base": {"study_tag": "std1", "bow_eval_tag": "gev_bow"},
-    "wafer_with_asi": {"study_tag": "std1", "bow_eval_tag": "gev_bow"}
-  }
-}
+defaults:
+  study_tag: std1
+  stress_eval_tag: gev1
+  rho_eval_tag: gev_rho
+  matrix_group_tag: solidcp2stdEg
+  matrix_eval_tag: gmevescp2
+  wafer_bow_eval_tag: gev_bow
+templates:
+  device_onon:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  device_trench:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  device_pillar:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  device_final:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  device2_mat3:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  mat1:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  mat2:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  mat3:
+    study_tag: std1
+    stress_eval_tag: gev1
+    matrix_eval_tag: gmevescp2
+  wafer_base:
+    study_tag: std1
+    bow_eval_tag: gev_bow
+  wafer_with_asi:
+    study_tag: std1
+    bow_eval_tag: gev_bow

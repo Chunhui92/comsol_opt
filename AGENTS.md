@@ -116,8 +116,8 @@ Staged calibration writes under `runs/<run-id>/out/<step>_<group>/`. Each stage 
 
 ## Development Rules
 
-- Use standard library compatibility where practical. Tests currently do not require `pytest` or `PyYAML`.
-- If `PyYAML` is absent, config files are parsed as JSON-compatible YAML.
+- Use standard library compatibility where practical. Tests currently do not require `pytest`.
+- `PyYAML` is required because project configuration files use real YAML syntax.
 - If `Optuna` is absent, calibration falls back to deterministic random search.
 - Before reporting completion, run `python3 -m unittest tests/test_workflow.py -v`.
 - Keep generated run outputs under `runs/` or `/private/tmp`; do not commit generated run directories.
