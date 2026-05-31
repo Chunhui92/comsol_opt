@@ -5,7 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from comsol_opt.calibration import run_optuna_or_fallback_calibration, run_quick_calibration
+from comsol_opt.calibration import (
+    run_optuna_or_fallback_calibration,
+    run_quick_calibration,
+    run_staged_calibration,
+)
 
 
 def main():
@@ -21,22 +25,41 @@ def main():
     parser.add_argument("--n-trials", type=int, default=5)
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--optimizer", choices=["auto", "random"], default="auto")
+    parser.add_argument("--mode", choices=["global", "staged"], default="global")
+    parser.add_argument("--stages", help="Comma-separated calibration group names or step IDs, e.g. G0_init,S01")
     args = parser.parse_args()
 
-    runner = run_optuna_or_fallback_calibration if args.optimizer == "auto" else run_quick_calibration
-    result = runner(
-        flow_path=args.flow,
-        params_path=args.params,
-        calibration_space_path=args.calibration_space,
-        experiment_path=args.experiment,
-        backend_name=args.backend,
-        run_id=args.run_id,
-        runs_root=args.runs_root,
-        repo_root=repo_root,
-        n_trials=args.n_trials,
-        seed=args.seed,
-    )
-    print(f"best_loss={result['best_loss']:.6g} best_trial={result['best_trial']} dir={result['calib_dir']}")
+    if args.mode == "staged":
+        result = run_staged_calibration(
+            flow_path=args.flow,
+            params_path=args.params,
+            calibration_space_path=args.calibration_space,
+            experiment_path=args.experiment,
+            backend_name=args.backend,
+            run_id=args.run_id,
+            runs_root=args.runs_root,
+            repo_root=repo_root,
+            n_trials=args.n_trials,
+            seed=args.seed,
+            stages=args.stages,
+            optimizer=args.optimizer,
+        )
+        print(f"completed_stages={result['completed_stages']} dir={result['calib_dir']}")
+    else:
+        runner = run_optuna_or_fallback_calibration if args.optimizer == "auto" else run_quick_calibration
+        result = runner(
+            flow_path=args.flow,
+            params_path=args.params,
+            calibration_space_path=args.calibration_space,
+            experiment_path=args.experiment,
+            backend_name=args.backend,
+            run_id=args.run_id,
+            runs_root=args.runs_root,
+            repo_root=repo_root,
+            n_trials=args.n_trials,
+            seed=args.seed,
+        )
+        print(f"best_loss={result['best_loss']:.6g} best_trial={result['best_trial']} dir={result['calib_dir']}")
 
 
 if __name__ == "__main__":

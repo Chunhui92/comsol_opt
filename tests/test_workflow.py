@@ -148,6 +148,50 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertTrue((calib_dir / "best_params.yaml").exists())
             self.assertTrue((calib_dir / "best_summary.csv").exists())
 
+    def test_staged_calibration_writes_per_stage_outputs_and_carries_params(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp) / "runs"
+            cmd = [
+                sys.executable,
+                str(ROOT / "python" / "calibration_optuna.py"),
+                "--backend",
+                "mock",
+                "--run-id",
+                "staged_test",
+                "--runs-root",
+                str(run_root),
+                "--n-trials",
+                "2",
+                "--optimizer",
+                "random",
+                "--mode",
+                "staged",
+                "--stages",
+                "G0_init,G1_ONON_base",
+            ]
+            completed = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=True)
+            self.assertIn("completed_stages=2", completed.stdout)
+
+            calib_dir = run_root / "staged_test"
+            g0 = calib_dir / "out" / "S00_G0_init"
+            g1 = calib_dir / "out" / "S01_G1_ONON_base"
+            self.assertTrue((g0 / "stage.log").exists())
+            self.assertTrue((g0 / "best_params.yaml").exists())
+            self.assertTrue((g0 / "best_summary.csv").exists())
+            self.assertTrue((g1 / "stage.log").exists())
+            self.assertTrue((g1 / "best_params.yaml").exists())
+            self.assertTrue((calib_dir / "out" / "final_params.yaml").exists())
+
+            g0_params = json.loads((g0 / "best_params.yaml").read_text(encoding="utf-8"))
+            g1_trial_params = json.loads(
+                (g1 / "trials" / "trial_0000" / "params_trial.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(g1_trial_params["FEOL"], g0_params["FEOL"])
+
+            g1_log = (g1 / "stage.log").read_text(encoding="utf-8")
+            self.assertIn("stage=G1_ONON_base", g1_log)
+            self.assertIn("params=ONON.sigma_O_base,ONON.sigma_N_base", g1_log)
+
 
 class ConfigTests(unittest.TestCase):
     def test_default_flow_config_loads_without_pyyaml(self):
@@ -168,6 +212,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(txt_set.files["struct"], ROOT / "params" / "struct.txt")
         self.assertEqual(txt_set.files["stress"], ROOT / "params" / "stress.txt")
         self.assertEqual(txt_set.files["temp"], ROOT / "params" / "temp.txt")
+
+    def test_comsol_worker_draft_contains_expected_api_shape(self):
+        worker = ROOT / "java" / "ComsolStepWorker.java"
+        text = worker.read_text(encoding="utf-8")
+        self.assertIn("ModelUtil.load", text)
+        self.assertIn("model.param().loadFile", text)
+        self.assertIn(".study(", text)
+        self.assertIn(".run()", text)
+        self.assertIn("gev1", text)
+        self.assertIn("gmevescp2", text)
 
 
 if __name__ == "__main__":

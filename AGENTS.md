@@ -49,6 +49,12 @@ Run mock calibration:
 python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trials 5
 ```
 
+Run selected staged calibration:
+
+```bash
+python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_init,S01 --run-id staged_001 --n-trials 5
+```
+
 ## Repository Layout
 
 - `configs/flow.yaml`: S00-S10 process flow, RVE dependencies, wafer template selection, calibration groups.
@@ -61,6 +67,7 @@ python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trial
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.
+- `java/ComsolStepWorker.java`: first-pass COMSOL Java worker skeleton.
 - `tests/test_workflow.py`: unittest coverage for parameter txt updates, state inheritance, mock flow, and calibration.
 
 ## COMSOL Parameter Contract
@@ -102,6 +109,8 @@ Available backends:
 
 The Java COMSOL worker must output the same JSON shape as the mock backend.
 
+Staged calibration writes under `runs/<run-id>/out/<step>_<group>/`. Each stage must contain `stage.log`, per-trial flow outputs, `calibration_history.csv`, `best_params.yaml`, and `best_summary.csv`. Later stages must start from the previous stage's best params.
+
 ## Development Rules
 
 - Use standard library compatibility where practical. Tests currently do not require `pytest` or `PyYAML`.
@@ -109,4 +118,3 @@ The Java COMSOL worker must output the same JSON shape as the mock backend.
 - If `Optuna` is absent, calibration falls back to deterministic random search.
 - Before reporting completion, run `python3 -m unittest tests/test_workflow.py -v`.
 - Keep generated run outputs under `runs/` or `/private/tmp`; do not commit generated run directories.
-
