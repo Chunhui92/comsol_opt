@@ -16,11 +16,18 @@ The first implementation focuses on the Python orchestration layer:
 
 ## Quick Start
 
+Create and populate a local virtual environment:
+
 ```bash
-python3 python/run_flow.py --backend dryrun --run-id dryrun_001
-python3 python/run_flow.py --backend mock --run-id mock_001
-python3 python/compute_loss.py --summary runs/mock_001/summary.csv
-python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trials 5
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+```bash
+.venv/bin/python python/run_flow.py --backend dryrun --run-id dryrun_001
+.venv/bin/python python/run_flow.py --backend mock --run-id mock_001
+.venv/bin/python python/compute_loss.py --summary runs/mock_001/summary.csv
+.venv/bin/python python/calibration_optuna.py --backend mock --run-id calib_001 --n-trials 5
 ```
 
 ## COMSOL Parameters
@@ -41,4 +48,3 @@ Initial assumed tags live in `configs/template_tags.yaml`:
 - wafer bow evaluation: `gev_bow`
 
 These are intentionally config-driven so exported Java scripts can replace them without changing Python orchestration code.
-

@@ -1,2 +1,2 @@
-optuna>=4.0
-PyYAML>=6.0
+optuna==4.8.0
+PyYAML==6.0.3
