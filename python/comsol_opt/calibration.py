@@ -22,6 +22,31 @@ def all_parameter_specs(calibration_space):
     return specs
 
 
+def get_param(params, dotted_key):
+    value = params
+    for part in dotted_key.split("."):
+        value = value[part]
+    return value
+
+
+def parameter_regularization_loss(params, specs):
+    total = 0.0
+    for spec in specs:
+        if "prior" not in spec or "scale" not in spec:
+            continue
+        scale = float(spec["scale"])
+        if scale == 0.0:
+            continue
+        value = float(get_param(params, spec["key"]))
+        prior = float(spec["prior"])
+        total += ((value - prior) / scale) ** 2
+    return total
+
+
+def regularization_weight(calibration_space):
+    return float(calibration_space.get("regularization", {}).get("lambda", 0.0))
+
+
 def deterministic_trial_params(base_params, specs, trial_index, seed):
     params = copy_params(base_params)
     if trial_index == 0:
@@ -85,6 +110,7 @@ def run_staged_calibration(
 ):
     base_params = load_config(params_path)
     calibration_space = load_config(calibration_space_path)
+    lambda_reg = regularization_weight(calibration_space)
     groups = select_groups(calibration_space, stages)
     calib_dir = Path(runs_root) / run_id
     out_dir = calib_dir / "out"
@@ -129,6 +155,7 @@ def run_staged_calibration(
                 seed + stage_index * 1000,
                 target_step,
                 stage_dir,
+                lambda_reg,
             )
         else:
             stage_result = _run_random_stage(
@@ -143,6 +170,7 @@ def run_staged_calibration(
                 seed + stage_index * 1000,
                 target_step,
                 stage_dir,
+                lambda_reg,
             )
 
         current_params = stage_result["params"]
@@ -160,7 +188,7 @@ def run_staged_calibration(
     return {"calib_dir": calib_dir, "completed_stages": len(groups), "final_params": current_params}
 
 
-def _run_random_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir):
+def _run_random_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir, lambda_reg=0.0):
     best = None
     history = []
     for trial_index in range(n_trials):
@@ -175,6 +203,8 @@ def _run_random_stage(current_params, specs, flow_path, experiment_path, backend
             trials_root,
             target_step,
             stage_dir,
+            specs,
+            lambda_reg,
             "random",
         )
         history.append(trial_result["record"])
@@ -184,7 +214,7 @@ def _run_random_stage(current_params, specs, flow_path, experiment_path, backend
     return best
 
 
-def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir):
+def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir, lambda_reg=0.0):
     try:
         import optuna  # type: ignore
     except ModuleNotFoundError:
@@ -200,6 +230,7 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
             seed,
             target_step,
             stage_dir,
+            lambda_reg,
         )
 
     best = None
@@ -221,6 +252,8 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
             trials_root,
             target_step,
             stage_dir,
+            specs,
+            lambda_reg,
             "optuna",
         )
         history.append(trial_result["record"])
@@ -237,7 +270,7 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
     return best
 
 
-def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_name, repo_root, trials_root, target_step, stage_dir, optimizer_name):
+def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_name, repo_root, trials_root, target_step, stage_dir, specs, lambda_reg, optimizer_name):
     trial_dir = trials_root / f"trial_{trial_index:04d}"
     trial_dir.mkdir(parents=True, exist_ok=True)
     params_file = trial_dir / "params_trial.yaml"
@@ -251,15 +284,20 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
         runs_root=trial_dir,
         repo_root=repo_root,
         use_cache=True,
+        parameter_map_path=None,
     )
     summary_path = result["run_dir"] / "summary.csv"
-    loss = loss_for_stage(summary_path, target_step)
+    bow_loss = loss_for_stage(summary_path, target_step)
+    reg_loss = parameter_regularization_loss(params, specs)
+    loss = bow_loss + lambda_reg * reg_loss
     record = {
         "trial": trial_index,
         "stage": stage_dir.name,
         "optimizer": optimizer_name,
         "target_step": target_step,
         "loss": loss,
+        "bow_loss": bow_loss,
+        "reg_loss": reg_loss,
         "run_dir": str(result["run_dir"]),
     }
     _write_stage_log(stage_dir / "stage.log", [json.dumps(record, sort_keys=True)])
@@ -269,6 +307,7 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
 def run_quick_calibration(flow_path, params_path, calibration_space_path, experiment_path, backend_name, run_id, runs_root, repo_root, n_trials, seed=17):
     base_params = load_config(params_path)
     calibration_space = load_config(calibration_space_path)
+    lambda_reg = regularization_weight(calibration_space)
     specs = all_parameter_specs(calibration_space)
     calib_dir = Path(runs_root) / run_id
     trials_root = calib_dir / "trials"
@@ -292,10 +331,20 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
             runs_root=trial_dir,
             repo_root=repo_root,
             use_cache=True,
+            parameter_map_path=None,
         )
         summary_path = result["run_dir"] / "summary.csv"
-        loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
-        record = {"trial": trial_index, "stage": "quick_global", "loss": loss, "run_dir": str(result["run_dir"])}
+        bow_loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
+        reg_loss = parameter_regularization_loss(params, specs)
+        loss = bow_loss + lambda_reg * reg_loss
+        record = {
+            "trial": trial_index,
+            "stage": "quick_global",
+            "loss": loss,
+            "bow_loss": bow_loss,
+            "reg_loss": reg_loss,
+            "run_dir": str(result["run_dir"]),
+        }
         history.append(record)
         if best is None or loss < best["loss"]:
             best = {"loss": loss, "params": params, "summary": summary_path, "trial": trial_index}
@@ -336,6 +385,7 @@ def run_optuna_or_fallback_calibration(
 
     base_params = load_config(params_path)
     calibration_space = load_config(calibration_space_path)
+    lambda_reg = regularization_weight(calibration_space)
     specs = all_parameter_specs(calibration_space)
     calib_dir = Path(runs_root) / run_id
     trials_root = calib_dir / "trials"
@@ -362,10 +412,22 @@ def run_optuna_or_fallback_calibration(
             runs_root=trial_dir,
             repo_root=repo_root,
             use_cache=True,
+            parameter_map_path=None,
         )
         summary_path = result["run_dir"] / "summary.csv"
-        loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
-        history.append({"trial": trial.number, "stage": "optuna_global", "loss": loss, "run_dir": str(result["run_dir"])})
+        bow_loss = compute_loss_from_rows(load_summary_rows(summary_path))["loss"]
+        reg_loss = parameter_regularization_loss(params, specs)
+        loss = bow_loss + lambda_reg * reg_loss
+        history.append(
+            {
+                "trial": trial.number,
+                "stage": "optuna_global",
+                "loss": loss,
+                "bow_loss": bow_loss,
+                "reg_loss": reg_loss,
+                "run_dir": str(result["run_dir"]),
+            }
+        )
         if best is None or loss < best["loss"]:
             best = {"loss": loss, "params": params, "summary": summary_path, "trial": trial.number}
         return loss
@@ -384,7 +446,7 @@ def run_optuna_or_fallback_calibration(
 def _write_history(path, history):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        fieldnames = ["trial", "stage", "optimizer", "target_step", "loss", "run_dir"]
+        fieldnames = ["trial", "stage", "optimizer", "target_step", "loss", "bow_loss", "reg_loss", "run_dir"]
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(history)

@@ -13,6 +13,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 from comsol_opt.config_io import load_config
 from comsol_opt.flow import prepare_parameter_txt_set
+from comsol_opt.calibration import parameter_regularization_loss
 from comsol_opt.loss import compute_loss_from_rows
 from comsol_opt.parameter_txt import ParameterTxtSet
 
@@ -212,6 +213,33 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(txt_set.files["struct"], ROOT / "params" / "struct.txt")
         self.assertEqual(txt_set.files["stress"], ROOT / "params" / "stress.txt")
         self.assertEqual(txt_set.files["temp"], ROOT / "params" / "temp.txt")
+
+    def test_parameter_map_config_drives_txt_mapping(self):
+        parameter_map = load_config(ROOT / "configs" / "parameter_map.yaml")
+        txt_set = prepare_parameter_txt_set(ROOT)
+        mapping = parameter_map["parameters"]["W.sigma_fill"]
+        self.assertEqual(mapping["file"], "stress")
+        self.assertEqual(mapping["txt_name"], "sigma_w_fill")
+        self.assertEqual(txt_set.mappings["W.sigma_fill"]["file"], "stress")
+        self.assertEqual(txt_set.mappings["W.sigma_fill"]["name"], "sigma_w_fill")
+
+    def test_calibration_space_has_prior_scale_and_units(self):
+        space = load_config(ROOT / "configs" / "calibration_space.yaml")
+        missing = []
+        for group in space["groups"]:
+            for spec in group["params"]:
+                for key in ("prior", "scale", "unit"):
+                    if key not in spec:
+                        missing.append((group["name"], spec["key"], key))
+        self.assertEqual(missing, [])
+
+    def test_prior_scale_regularization_uses_normalized_distance(self):
+        specs = [
+            {"key": "x", "prior": 10.0, "scale": 2.0},
+            {"key": "nested.y", "prior": 5.0, "scale": 5.0},
+        ]
+        params = {"x": 12.0, "nested": {"y": 0.0}}
+        self.assertEqual(parameter_regularization_loss(params, specs), 2.0)
 
     def test_comsol_worker_draft_contains_expected_api_shape(self):
         worker = ROOT / "java" / "ComsolStepWorker.java"

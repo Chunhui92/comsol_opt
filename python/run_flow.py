@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--runs-root", default=str(repo_root / "runs"))
     parser.add_argument("--use-cache", action="store_true")
+    parser.add_argument("--parameter-map", default=str(repo_root / "configs" / "parameter_map.yaml"))
     args = parser.parse_args()
 
     backend = make_backend(args.backend, args.comsol_command)
@@ -32,6 +33,7 @@ def main():
         runs_root=args.runs_root,
         repo_root=repo_root,
         use_cache=args.use_cache,
+        parameter_map_path=args.parameter_map,
     )
     print(f"Completed {result['completed']} steps in {result['run_dir']}")
 

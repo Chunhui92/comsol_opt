@@ -60,6 +60,7 @@ python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_in
 - `configs/flow.yaml`: S00-S10 process flow, RVE dependencies, wafer template selection, calibration groups.
 - `configs/params_nominal.yaml`: nominal process/material/geometry parameters.
 - `configs/calibration_space.yaml`: parameter bounds for staged/global calibration.
+- `configs/parameter_map.yaml`: Python parameter key to COMSOL txt file/name mapping.
 - `configs/template_tags.yaml`: assumed COMSOL study/evaluation tags.
 - `params/struct.txt`: COMSOL structural parameter file.
 - `params/stress.txt`: COMSOL stress/release parameter file.
@@ -81,6 +82,8 @@ The Python layer writes three parameter txt files for each step/trial:
 The paths are recorded in `step_input.json` under `parameter_txt_paths`. A real COMSOL Java worker should load all three files before solving any device, mat, or wafer model.
 
 Do not hard-code parameter values in Java. Treat the txt files as the runtime parameter source.
+
+Keep parameter routing in `configs/parameter_map.yaml`. Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`. `prior` is the nominal value; `scale` is the denominator for regularization against that prior.
 
 ## RVE and State Rules
 

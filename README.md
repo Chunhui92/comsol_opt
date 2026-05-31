@@ -49,6 +49,8 @@ The Python layer treats the three parameter txt files as the write boundary for 
 
 The Java worker should load all three paths from `parameter_txt_paths` before solving the device, mat, or wafer model.
 
+`configs/parameter_map.yaml` is the source of truth for routing Python parameter keys into COMSOL txt files. `configs/calibration_space.yaml` is the source of truth for optimizer bounds. In calibration space, `prior` is the nominal or expected value, `scale` normalizes distance from that prior for regularization, and `unit` documents/reviews the range.
+
 ## Assumed COMSOL Tags
 
 Initial assumed tags live in `configs/template_tags.yaml`:

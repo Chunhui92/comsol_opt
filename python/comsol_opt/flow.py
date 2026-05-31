@@ -8,32 +8,7 @@ from .params import flatten_params
 from .state import initial_state
 
 
-DEFAULT_PARAM_TXT_FILES = {
-    "struct": "params/struct.txt",
-    "stress": "params/stress.txt",
-    "temp": "params/temp.txt",
-}
-
-DEFAULT_PARAM_TXT_MAPPINGS = {
-    "geometry.pillar_diameter": {"file": "struct", "name": "pillar_diameter"},
-    "FEOL.sigma_init_x": {"file": "stress", "name": "sigma_feol_x"},
-    "FEOL.sigma_init_y": {"file": "stress", "name": "sigma_feol_y"},
-    "ONON.sigma_O_base": {"file": "stress", "name": "sigma_o_base"},
-    "ONON.sigma_N_base": {"file": "stress", "name": "sigma_n_base"},
-    "release.trench_etch_ONON": {"file": "stress", "name": "release_trench_etch_onon"},
-    "release.dpillar_form_ONON": {"file": "stress", "name": "release_dpillar_form_onon"},
-    "release.mat_remove_ONON": {"file": "stress", "name": "release_mat_remove_onon"},
-    "release.final_ONON": {"file": "stress", "name": "release_final_onon"},
-    "Ox.sigma_trench_fill": {"file": "stress", "name": "sigma_ox_trench_fill"},
-    "pillar_dep.dep1.sigma_init": {"file": "stress", "name": "sigma_dep1"},
-    "pillar_dep.dep2.sigma_init": {"file": "stress", "name": "sigma_dep2"},
-    "pillar_dep.dep3.sigma_init": {"file": "stress", "name": "sigma_dep3"},
-    "pillar_dep.dep4.sigma_init": {"file": "stress", "name": "sigma_dep4"},
-    "pillar_dep.dep5.sigma_init": {"file": "stress", "name": "sigma_dep5"},
-    "aSi.sigma": {"file": "stress", "name": "sigma_asi"},
-    "W.sigma_fill": {"file": "stress", "name": "sigma_w_fill"},
-    "process.temperature_C": {"file": "temp", "name": "process_temp"},
-}
+DEFAULT_PARAMETER_MAP_PATH = "configs/parameter_map.yaml"
 
 
 def load_experiment(path):
@@ -119,14 +94,30 @@ def write_summary(run_dir, steps, experiment):
     return path
 
 
-def prepare_parameter_txt_set(repo_root):
+def prepare_parameter_txt_set(repo_root, parameter_map_path=None):
+    repo_root = Path(repo_root)
+    config_path = Path(parameter_map_path) if parameter_map_path else repo_root / DEFAULT_PARAMETER_MAP_PATH
+    parameter_map = load_config(config_path)
     return ParameterTxtSet(
-        files={key: Path(repo_root) / value for key, value in DEFAULT_PARAM_TXT_FILES.items()},
-        mappings=DEFAULT_PARAM_TXT_MAPPINGS,
+        files={key: repo_root / value for key, value in parameter_map["parameter_files"].items()},
+        mappings={
+            key: {"file": value["file"], "name": value["txt_name"]}
+            for key, value in parameter_map["parameters"].items()
+        },
     )
 
 
-def run_flow(flow_path, params_path, experiment_path, backend, run_id, runs_root, repo_root, use_cache=False):
+def run_flow(
+    flow_path,
+    params_path,
+    experiment_path,
+    backend,
+    run_id,
+    runs_root,
+    repo_root,
+    use_cache=False,
+    parameter_map_path=None,
+):
     flow = load_config(flow_path)
     params = load_config(params_path)
     validate_flow(flow)
@@ -137,7 +128,7 @@ def run_flow(flow_path, params_path, experiment_path, backend, run_id, runs_root
     dump_json(initial_path, initial_state(params))
     state_in_path = initial_path
 
-    txt_set = prepare_parameter_txt_set(repo_root)
+    txt_set = prepare_parameter_txt_set(repo_root, parameter_map_path)
     cache = StepCache(run_dir / ".cache") if use_cache else None
     completed = 0
     for step in flow["steps"]:
