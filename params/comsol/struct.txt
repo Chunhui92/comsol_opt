@@ -1,0 +1,1 @@
+pillar_diameter = 1.2e-7

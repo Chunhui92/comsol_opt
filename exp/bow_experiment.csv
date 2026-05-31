@@ -1,0 +1,16 @@
+step_id,step_name,bow_x_um,bow_y_um,temperature_C,weight_x,weight_y
+S00,init,100,80,25,1.0,1.0
+S01,ONONdep,75,65,25,1.0,1.0
+S02,trench_etch,88,72,25,1.0,1.0
+S03,trench_fill,95,78,25,1.0,1.0
+S04,pillar_etch,110,90,25,1.0,1.0
+S05a,pillar_dep1,115,94,25,1.0,1.0
+S05b,pillar_dep2,120,98,25,1.0,1.0
+S05c,pillar_dep3,125,102,25,1.0,1.0
+S05d,pillar_dep4,130,106,25,1.0,1.0
+S05e,pillar_dep5,135,110,25,1.0,1.0
+S06,dpillar_form,120,100,25,1.0,1.0
+S07,aSi_dep,140,115,25,1.0,1.0
+S08,mat_remove,105,90,25,1.0,1.0
+S09,W_fill,70,55,25,1.0,1.0
+S10,final,50,40,25,1.0,1.0

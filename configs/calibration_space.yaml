@@ -1,0 +1,19 @@
+{
+  "groups": [
+    {"name": "G0_init", "start_step": "S00", "params": [{"key": "FEOL.sigma_init_x", "low": -500000000.0, "high": 500000000.0}, {"key": "FEOL.sigma_init_y", "low": -500000000.0, "high": 500000000.0}]},
+    {"name": "G1_ONON_base", "start_step": "S01", "params": [{"key": "ONON.sigma_O_base", "low": -300000000.0, "high": 300000000.0}, {"key": "ONON.sigma_N_base", "low": -1000000000.0, "high": 500000000.0}]},
+    {"name": "G2_trench_release", "start_step": "S02", "params": [{"key": "release.trench_etch_ONON", "low": 0.3, "high": 1.1}]},
+    {"name": "G3_ox_fill", "start_step": "S03", "params": [{"key": "Ox.sigma_trench_fill", "low": -500000000.0, "high": 500000000.0}]},
+    {"name": "G4_pillar_diameter", "start_step": "S04", "params": [{"key": "geometry.pillar_diameter", "low": 1.14e-7, "high": 1.26e-7}]},
+    {"name": "G5_dep1", "start_step": "S05a", "params": [{"key": "pillar_dep.dep1.sigma_init", "low": -1000000000.0, "high": 1000000000.0}]},
+    {"name": "G5_dep2", "start_step": "S05b", "params": [{"key": "pillar_dep.dep2.sigma_init", "low": -1000000000.0, "high": 1000000000.0}]},
+    {"name": "G5_dep3", "start_step": "S05c", "params": [{"key": "pillar_dep.dep3.sigma_init", "low": -1000000000.0, "high": 1000000000.0}]},
+    {"name": "G5_dep4", "start_step": "S05d", "params": [{"key": "pillar_dep.dep4.sigma_init", "low": -1000000000.0, "high": 1000000000.0}]},
+    {"name": "G5_dep5", "start_step": "S05e", "params": [{"key": "pillar_dep.dep5.sigma_init", "low": -1000000000.0, "high": 1000000000.0}]},
+    {"name": "G6_dpillar_release", "start_step": "S06", "params": [{"key": "release.dpillar_form_ONON", "low": 0.3, "high": 1.1}]},
+    {"name": "G7_aSi", "start_step": "S07", "params": [{"key": "aSi.sigma", "low": -800000000.0, "high": 800000000.0}]},
+    {"name": "G8_mat_remove", "start_step": "S08", "params": [{"key": "release.mat_remove_ONON", "low": 0.2, "high": 1.1}]},
+    {"name": "G9_W_fill", "start_step": "S09", "params": [{"key": "W.sigma_fill", "low": -1500000000.0, "high": 1500000000.0}]},
+    {"name": "G10_final", "start_step": "S10", "params": [{"key": "release.final_ONON", "low": 0.8, "high": 1.05}]}
+  ]
+}
