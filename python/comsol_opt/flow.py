@@ -101,7 +101,7 @@ def prepare_parameter_txt_set(repo_root, parameter_map_path=None):
     return ParameterTxtSet(
         files={key: repo_root / value for key, value in parameter_map["parameter_files"].items()},
         mappings={
-            key: {"file": value["file"], "name": value["txt_name"]}
+            key: {"file": value["file"], "name": value["txt_name"], "unit": value.get("unit", "")}
             for key, value in parameter_map["parameters"].items()
         },
     )

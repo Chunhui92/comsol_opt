@@ -33,22 +33,22 @@
     "release.trench_etch_ONON": {
       "file": "stress",
       "txt_name": "release_trench_etch_onon",
-      "unit": "ratio"
+      "unit": ""
     },
     "release.dpillar_form_ONON": {
       "file": "stress",
       "txt_name": "release_dpillar_form_onon",
-      "unit": "ratio"
+      "unit": ""
     },
     "release.mat_remove_ONON": {
       "file": "stress",
       "txt_name": "release_mat_remove_onon",
-      "unit": "ratio"
+      "unit": ""
     },
     "release.final_ONON": {
       "file": "stress",
       "txt_name": "release_final_onon",
-      "unit": "ratio"
+      "unit": ""
     },
     "Ox.sigma_trench_fill": {
       "file": "stress",
@@ -93,7 +93,7 @@
     "process.temperature_C": {
       "file": "temp",
       "txt_name": "process_temp",
-      "unit": "C"
+      "unit": "degC"
     }
   }
 }

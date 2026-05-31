@@ -1,1 +1,1 @@
-process_temp = 25.0
+process_temp	25[degC]	process temperature

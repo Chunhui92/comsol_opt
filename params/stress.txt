@@ -1,16 +1,9 @@
-sigma_feol_x = 180000000.0
-sigma_feol_y = 160000000.0
-sigma_o_base = 100000000.0
-sigma_n_base = -300000000.0
-sigma_ox_trench_fill = 120000000.0
-sigma_dep1 = 100000000.0
-sigma_dep2 = -150000000.0
-sigma_dep3 = 200000000.0
-sigma_dep4 = -80000000.0
-sigma_dep5 = 120000000.0
-sigma_asi = -150000000.0
-sigma_w_fill = 500000000.0
-release_trench_etch_onon = 0.75
-release_dpillar_form_onon = 0.8
-release_mat_remove_onon = 0.7
-release_final_onon = 1.0
+wafer_d	300[mm]	wafer diameter
+t_si	700[um]	silicon substrate thickness
+t_ox	1[um]	oxide thickness
+E_si	169[GPa]	Young's modulus of silicon
+nu_si	0.28	Poisson ratio of silicon
+alpha_si	2.6e-6[1/K]	CTE of silicon
+sigma_ox	-200[MPa]	oxide residual stress
+T_ref_ox	400[degC]	oxide zero-stress temperature
+T0	25[degC]	room temperature
