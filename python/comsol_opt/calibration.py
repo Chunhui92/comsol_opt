@@ -7,6 +7,7 @@ from pathlib import Path
 from .backends import make_backend
 from .config_io import dump_data, load_config
 from .flow import run_flow
+from .flow_runner import load_flow_definition
 from .loss import compute_loss_from_rows, load_summary_rows
 from .params import copy_params, flatten_params, set_param
 
@@ -45,6 +46,15 @@ def parameter_regularization_loss(params, specs):
 
 def regularization_weight(calibration_space):
     return float(calibration_space.get("regularization", {}).get("lambda", 0.0))
+
+
+def load_base_params(params_path, flow_path, repo_root):
+    if params_path is not None:
+        return load_config(params_path)
+    flow = load_flow_definition(flow_path, repo_root)
+    if flow.get("layout") == "layered_dag" and flow["steps"]:
+        return copy_params(flow["steps"][0]["parameters"])
+    raise ValueError("params_path is required for legacy flow configs")
 
 
 def deterministic_trial_params(base_params, specs, trial_index, seed):
@@ -108,7 +118,7 @@ def run_staged_calibration(
     stages=None,
     optimizer="auto",
 ):
-    base_params = load_config(params_path)
+    base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
     groups = select_groups(calibration_space, stages)
@@ -306,7 +316,7 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
 
 
 def run_quick_calibration(flow_path, params_path, calibration_space_path, experiment_path, backend_name, run_id, runs_root, repo_root, n_trials, seed=17):
-    base_params = load_config(params_path)
+    base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
     specs = all_parameter_specs(calibration_space)
@@ -385,7 +395,7 @@ def run_optuna_or_fallback_calibration(
             seed,
         )
 
-    base_params = load_config(params_path)
+    base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
     specs = all_parameter_specs(calibration_space)

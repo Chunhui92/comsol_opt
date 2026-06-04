@@ -63,11 +63,9 @@ python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_in
 - `configs/templates.yaml`: COMSOL template registry.
 - `configs/extractors.yaml`: study/evaluation/extractor tag registry.
 - `configs/params/`: COMSOL parameter TXT files merged in runtime order.
-- `configs/params_nominal.yaml`: legacy/mock nominal process/material/geometry parameters and calibration fallback input.
 - `configs/calibration_space.yaml`: parameter bounds for staged/global calibration.
-- `configs/parameter_map.yaml`: Python parameter key to COMSOL txt file/name mapping.
-- `configs/template_tags.yaml`: legacy assumed COMSOL study/evaluation tags.
-- `params/struct.txt`, `params/stress.txt`, `params/temp.txt`: legacy COMSOL parameter files for compatibility tests.
+- `configs/experiments/`: experiment bow data for summaries and loss.
+- `archive/legacy_config_scheme/`: old nominal YAML, parameter map, template tags, and three-file TXT parameter scheme.
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.
@@ -84,7 +82,7 @@ Do not hard-code parameter values in Java. Treat the txt files as the runtime pa
 
 Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`.
 `prior` is the nominal value; `scale` is the denominator for regularization against that prior.
-`configs/parameter_map.yaml` remains for the legacy three-file parameter writer.
+`archive/legacy_config_scheme/parameter_map.yaml` remains for the legacy three-file parameter writer.
 
 ## RVE and State Rules
 

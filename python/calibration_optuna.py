@@ -16,9 +16,9 @@ def main():
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
     parser.add_argument("--flow", default=str(repo_root / "configs" / "flow.yaml"))
-    parser.add_argument("--params", default=str(repo_root / "configs" / "params_nominal.yaml"))
+    parser.add_argument("--params", help="Optional YAML starting parameter override")
     parser.add_argument("--calibration-space", default=str(repo_root / "configs" / "calibration_space.yaml"))
-    parser.add_argument("--experiment", default=str(repo_root / "exp" / "bow_experiment.csv"))
+    parser.add_argument("--experiment", default=str(repo_root / "configs" / "experiments" / "bow_experiment.csv"))
     parser.add_argument("--backend", choices=["mock", "comsol"], default="mock")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--runs-root", default=str(repo_root / "runs"))
@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--optimizer", choices=["auto", "random"], default="auto")
     parser.add_argument("--mode", choices=["global", "staged"], default="global")
-    parser.add_argument("--stages", help="Comma-separated calibration group names or step IDs, e.g. G0_init,S01")
+    parser.add_argument("--stages", help="Comma-separated calibration group names or step IDs, e.g. G0_init,G2_trench_release")
     args = parser.parse_args()
 
     if args.mode == "staged":

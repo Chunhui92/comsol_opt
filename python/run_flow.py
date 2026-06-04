@@ -13,14 +13,14 @@ def main():
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
     parser.add_argument("--flow", default=str(repo_root / "configs" / "flow.yaml"))
-    parser.add_argument("--params", default=str(repo_root / "configs" / "params_nominal.yaml"))
-    parser.add_argument("--experiment", default=str(repo_root / "exp" / "bow_experiment.csv"))
+    parser.add_argument("--params", help="Optional YAML parameter override, mainly used by calibration trials")
+    parser.add_argument("--experiment", default=str(repo_root / "configs" / "experiments" / "bow_experiment.csv"))
     parser.add_argument("--backend", choices=["dryrun", "mock", "comsol"], default="mock")
     parser.add_argument("--comsol-command")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--runs-root", default=str(repo_root / "runs"))
     parser.add_argument("--use-cache", action="store_true")
-    parser.add_argument("--parameter-map", default=str(repo_root / "configs" / "parameter_map.yaml"))
+    parser.add_argument("--parameter-map", help="Optional legacy parameter map for old flow configs")
     args = parser.parse_args()
 
     backend = make_backend(args.backend, args.comsol_command)

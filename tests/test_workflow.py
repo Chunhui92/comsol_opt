@@ -204,7 +204,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             dump_data(flow_path, flow)
             result = run_flow(
                 flow_path=flow_path,
-                params_path=ROOT / "configs" / "params_nominal.yaml",
+                params_path=None,
                 experiment_path=ROOT / "exp" / "bow_experiment.csv",
                 backend=make_backend("mock"),
                 run_id="skip_wafer",
@@ -230,7 +230,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_flow(
                     flow_path=flow_path,
-                    params_path=ROOT / "configs" / "params_nominal.yaml",
+                    params_path=None,
                     experiment_path=ROOT / "exp" / "bow_experiment.csv",
                     backend=make_backend("mock"),
                     run_id="bad_rule",
@@ -246,6 +246,23 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(flow["steps"][-1]["id"], "S02")
         self.assertIn("global", flow)
         self.assertEqual(flow["steps"][0]["config"], "configs/steps/S00_init.yaml")
+
+    def test_configs_directory_contains_only_active_layered_scheme(self):
+        active_root_files = {
+            "calibration_space.yaml",
+            "extractors.yaml",
+            "flow.yaml",
+            "templates.yaml",
+        }
+        actual_root_files = {
+            path.name
+            for path in (ROOT / "configs").iterdir()
+            if path.is_file() and not path.name.startswith(".")
+        }
+        self.assertEqual(actual_root_files, active_root_files)
+        self.assertFalse((ROOT / "params").exists())
+        for legacy_name in ("params_nominal.yaml", "parameter_map.yaml", "template_tags.yaml"):
+            self.assertTrue((ROOT / "archive" / "legacy_config_scheme" / legacy_name).exists())
 
     def test_config_files_are_real_yaml_and_flow_is_readable(self):
         for path in (ROOT / "configs").glob("*.yaml"):
@@ -272,14 +289,23 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(template_paths)
         self.assertTrue(all(path.startswith("models/templates/") for path in template_paths))
 
-    def test_parameter_map_config_drives_txt_mapping(self):
-        parameter_map = load_config(ROOT / "configs" / "parameter_map.yaml")
+    def test_legacy_parameter_map_is_archived_but_still_supported(self):
+        parameter_map = load_config(ROOT / "archive" / "legacy_config_scheme" / "parameter_map.yaml")
         txt_set = prepare_parameter_txt_set(ROOT)
         mapping = parameter_map["parameters"]["W.sigma_fill"]
         self.assertEqual(mapping["file"], "stress")
         self.assertEqual(mapping["txt_name"], "sigma_w_fill")
         self.assertEqual(txt_set.mappings["W.sigma_fill"]["file"], "stress")
         self.assertEqual(txt_set.mappings["W.sigma_fill"]["name"], "sigma_w_fill")
+
+    def test_cli_defaults_do_not_point_to_legacy_config_files(self):
+        run_flow_text = (ROOT / "python" / "run_flow.py").read_text(encoding="utf-8")
+        calibration_text = (ROOT / "python" / "calibration_optuna.py").read_text(encoding="utf-8")
+        self.assertNotIn("params_nominal.yaml", run_flow_text)
+        self.assertNotIn("parameter_map.yaml", run_flow_text)
+        self.assertNotIn("exp\" / \"bow_experiment.csv", run_flow_text)
+        self.assertNotIn("params_nominal.yaml", calibration_text)
+        self.assertIn("configs\" / \"experiments\" / \"bow_experiment.csv", run_flow_text)
 
     def test_calibration_space_has_prior_scale_and_units(self):
         space = load_config(ROOT / "configs" / "calibration_space.yaml")

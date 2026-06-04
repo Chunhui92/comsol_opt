@@ -1,7 +1,7 @@
 parameter_files:
-  struct: params/struct.txt
-  stress: params/stress.txt
-  temp: params/temp.txt
+  struct: archive/legacy_config_scheme/params/struct.txt
+  stress: archive/legacy_config_scheme/params/stress.txt
+  temp: archive/legacy_config_scheme/params/temp.txt
 parameters:
   geometry.pillar_diameter:
     file: struct

@@ -10,7 +10,7 @@ from .step_input import build_step_input, validate_flow
 from .summary import load_experiment, write_summary
 
 
-DEFAULT_PARAMETER_MAP_PATH = "configs/parameter_map.yaml"
+DEFAULT_PARAMETER_MAP_PATH = "archive/legacy_config_scheme/parameter_map.yaml"
 
 
 def load_flow_definition(flow_path, repo_root):
@@ -162,12 +162,13 @@ def run_flow(
 
 def _load_initial_params(params_path, flow):
     if flow.get("layout") == "layered_dag":
-        path = Path(params_path)
-        if path.exists() and path.suffix in {".yaml", ".yml"} and path.name != "params_nominal.yaml":
-            return load_config(path)
+        if params_path is not None:
+            return load_config(params_path)
         if flow["steps"]:
             return flow["steps"][0]["parameters"]
         return model_params_from_comsol_txt({})
+    if params_path is None:
+        raise ValueError("params_path is required for legacy flow configs")
     return load_config(params_path)
 
 

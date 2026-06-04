@@ -9,6 +9,8 @@ This file tracks the next workflow improvements after the current Python/mock or
 - `step_input.py` can write DAG-style `nodes` with explicit `run`/`inherit` actions.
 - The mock backend executes DAG nodes, writes `manifest.json`, and validates inherited RVE state.
 - COMSOL-style parameter TXT files under `configs/params/` are merged in global, step, calibration override order.
+- `configs/` now contains only the active layered DAG scheme; old nominal YAML, tag, and three-file TXT configs are archived under `archive/legacy_config_scheme/`.
+- `README.md` is the single active project overview. Older planning/spec documents are archived with the legacy scheme.
 - Unknown `update_rule` values fail fast.
 - `run_wafer: false` skips the wafer solve in the mock backend and marks `wafer_skipped`.
 - `dump_data` is the preferred JSON/YAML writer; `dump_json` is a compatibility alias.
