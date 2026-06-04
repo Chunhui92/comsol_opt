@@ -5,13 +5,24 @@ from .rve import empty_rve, make_rve
 
 def initial_state(params):
     feol = params["FEOL"]
+    rve = {
+        "device_main": empty_rve("device_main"),
+        "device_aux": empty_rve("device_aux"),
+        "onon_device": empty_rve("onon_device"),
+        "mat1": empty_rve("mat1"),
+        "mat2": empty_rve("mat2"),
+        "mat3": empty_rve("mat3"),
+        "mat4": empty_rve("mat4"),
+        "die": empty_rve("die"),
+    }
     state = {
         "step_id": "INIT",
         "step_name": "initial",
         "wafer_result": {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0},
+        "rve": rve,
         "device_rves": {
-            "device_default": empty_rve("device_default"),
-            "device2_for_mat3": empty_rve("device2_for_mat3"),
+            "device_default": rve["device_main"],
+            "device2_for_mat3": rve["device_aux"],
         },
         "wafer_inputs": {
             "FEOL": make_rve(
@@ -25,6 +36,8 @@ def initial_state(params):
             "mat1": empty_rve("mat1"),
             "mat2": empty_rve("mat2"),
             "mat3": empty_rve("mat3"),
+            "mat4": empty_rve("mat4"),
+            "die": rve["die"],
             "ONON_layer": empty_rve("ONON_layer"),
             "aSi_layer": empty_rve("aSi_layer"),
         },
@@ -51,6 +64,19 @@ def initial_state(params):
     return state
 
 
+def sync_legacy_state_aliases(state):
+    rve = state.setdefault("rve", {})
+    state.setdefault("device_rves", {})
+    state.setdefault("wafer_inputs", {})
+    if "device_main" in rve:
+        state["device_rves"]["device_default"] = rve["device_main"]
+    if "device_aux" in rve:
+        state["device_rves"]["device2_for_mat3"] = rve["device_aux"]
+    for name in ("mat1", "mat2", "mat3", "mat4", "die"):
+        if name in rve:
+            state["wafer_inputs"][name] = rve[name]
+
+
 def append_history(state, step_id, step_name, wafer_result):
     state["history"].append(
         {
@@ -60,4 +86,3 @@ def append_history(state, step_id, step_name, wafer_result):
             "bow_y_um": wafer_result["bow_y_um"],
         }
     )
-

@@ -1,0 +1,4 @@
+# S00 init local parameters
+
+sigma_FEOL_x            180[MPa]            initial FEOL x stress
+sigma_FEOL_y            160[MPa]            initial FEOL y stress

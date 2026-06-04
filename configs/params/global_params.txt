@@ -1,0 +1,13 @@
+# Global COMSOL parameters
+# Format:
+# name                  expression          description
+
+sigma_O_base            100[MPa]            ONON oxide base intrinsic stress
+sigma_N_base           -300[MPa]            ONON nitride base intrinsic stress
+r_ONON_trench           0.75                ONON release factor after trench etch
+r_ONON_remove           0.70                ONON release factor after remove
+pillar_diameter         120[nm]             pillar diameter
+sigma_W_fill            500[MPa]            W fill intrinsic stress
+dummy_E                 100[Pa]             dummy air equivalent Young modulus
+dummy_v                 0.3                 dummy air Poisson ratio
+dummy_rho               1.2[kg/m^3]         dummy air density

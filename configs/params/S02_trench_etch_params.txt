@@ -1,0 +1,5 @@
+# S02 trench etch local parameters
+
+r_ONON_trench           0.75                local trench release factor
+trench_cd               80[nm]              trench critical dimension
+trench_depth            300[nm]             trench etch depth

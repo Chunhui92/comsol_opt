@@ -1,0 +1,48 @@
+templates:
+  device:
+    dev01:
+      path: "models/templates/device/dev01.mph"
+      description: "device template 01"
+    dev02:
+      path: "models/templates/device/dev02.mph"
+      description: "device template 02"
+    dev03:
+      path: "models/templates/device/dev03.mph"
+      description: "ONON device RVE template"
+    dev04:
+      path: "models/templates/device/dev04.mph"
+      description: "trench etch device template"
+    dev05:
+      path: "models/templates/device/dev05.mph"
+    dev06:
+      path: "models/templates/device/dev06.mph"
+    dev07:
+      path: "models/templates/device/dev07.mph"
+    dev08:
+      path: "models/templates/device/dev08.mph"
+    dev09:
+      path: "models/templates/device/dev09.mph"
+    dev10:
+      path: "models/templates/device/dev10.mph"
+
+  mat:
+    mat_tpl01:
+      path: "models/templates/mat/mat_tpl01.mph"
+    mat_tpl02:
+      path: "models/templates/mat/mat_tpl02.mph"
+    mat_tpl03:
+      path: "models/templates/mat/mat_tpl03.mph"
+    mat_tpl04:
+      path: "models/templates/mat/mat_tpl04.mph"
+    mat_tpl05:
+      path: "models/templates/mat/mat_tpl05.mph"
+    mat_tpl06:
+      path: "models/templates/mat/mat_tpl06.mph"
+
+  die:
+    base:
+      path: "models/templates/die/die_base.mph"
+
+  wafer:
+    base:
+      path: "models/templates/wafer/wafer_base.mph"

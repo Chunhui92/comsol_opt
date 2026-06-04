@@ -1,0 +1,39 @@
+defaults:
+  rve:
+    study: std_cp
+    rho: gev_rho
+    stress: gev1
+    matrix_group: solidcp2stdEg
+    matrix_feature: gmevescp2
+
+  wafer:
+    study: std_warpage
+    bow_x: gev_bow_x
+    bow_y: gev_bow_y
+    kx: gev_kx
+    ky: gev_ky
+
+templates:
+  device.dev01:
+    use_default: rve
+  device.dev02:
+    use_default: rve
+  device.dev03:
+    use_default: rve
+  device.dev04:
+    use_default: rve
+
+  mat.mat_tpl01:
+    use_default: rve
+  mat.mat_tpl02:
+    use_default: rve
+  mat.mat_tpl03:
+    use_default: rve
+  mat.mat_tpl04:
+    use_default: rve
+
+  die.base:
+    use_default: rve
+
+  wafer.base:
+    use_default: wafer

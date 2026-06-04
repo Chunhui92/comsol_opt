@@ -1,0 +1,49 @@
+flow_name: wafer_warpage_20step_flow_v1
+
+global:
+  project_root: "."
+  backend: mock
+  run_root: "runs"
+  experiment_file: "configs/experiments/bow_experiment.csv"
+  templates_file: "configs/templates.yaml"
+  extractors_file: "configs/extractors.yaml"
+  global_params_file: "configs/params/global_params.txt"
+  calibration_override_file: "configs/params/calibration_override.txt"
+
+execution:
+  rerun_from_step: null
+  enable_cache: true
+  save_solved_mph: false
+  stop_on_error: true
+
+steps:
+  - id: S00
+    name: init
+    config: "configs/steps/S00_init.yaml"
+    enabled: true
+
+  - id: S01
+    name: ONONdep
+    config: "configs/steps/S01_onon_dep.yaml"
+    enabled: true
+
+  - id: S02
+    name: trench_etch
+    config: "configs/steps/S02_trench_etch.yaml"
+    enabled: true
+
+  - id: S03
+    name: trench_fill
+    config: "configs/steps/S03_trench_fill.yaml"
+    enabled: true
+
+  - id: S04
+    name: pillar_etch
+    config: "configs/steps/S04_pillar_etch.yaml"
+    enabled: true
+
+  # S05~S18 按真实工艺继续补充
+  - id: S19
+    name: final
+    config: "configs/steps/S19_final.yaml"
+    enabled: true

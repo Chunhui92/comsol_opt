@@ -3,6 +3,19 @@ from .process import VALID_UPDATE_RULES
 
 
 def validate_flow(flow):
+    if flow.get("layout") == "layered_dag" or "global" in flow:
+        seen = set()
+        for step in flow["steps"]:
+            if not step.get("enabled", True):
+                continue
+            step_id = step["id"]
+            if step_id in seen:
+                raise ValueError(f"Duplicate step id: {step_id}")
+            seen.add(step_id)
+            if "config" not in step:
+                raise ValueError(f"{step_id} missing step config")
+        return
+
     wafer_slots = set(flow["wafer_slots"])
     device_templates = set(flow["templates"]["devices"])
     mat_templates = set(flow["templates"]["mats"])
@@ -35,6 +48,26 @@ def validate_flow(flow):
 
 
 def build_step_input(step, flow, params, state_in_path, output_dir, parameter_txt_paths):
+    if "nodes" in step:
+        step_input = {
+            "step_id": step["id"],
+            "step_name": step["name"],
+            "process_type": step["process_type"],
+            "update_rule": step["update_rule"],
+            "templates": step.get("templates", {}),
+            "extractors": step.get("extractors", {}),
+            "nodes": step["nodes"],
+            "run_wafer": step.get("run_wafer", True),
+            "parameters": params,
+            "raw_parameters": step.get("raw_parameters", {}),
+            "parameter_txt_paths": {key: str(value) for key, value in parameter_txt_paths.items()},
+            "parameter_txt_order": step.get("parameter_txt_order", list(parameter_txt_paths)),
+            "state_in": str(state_in_path),
+            "output_dir": str(output_dir),
+        }
+        StepInput.from_dict(step_input)
+        return step_input
+
     device_templates = flow["templates"]["devices"]
     wafer_inputs = normalize_wafer_inputs(step, flow["wafer_slots"])
     step_input = {

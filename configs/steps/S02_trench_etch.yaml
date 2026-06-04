@@ -1,0 +1,97 @@
+step:
+  id: S02
+  name: trench_etch
+  process_type: etch
+  update_rule: trench_etch_release
+  experiment_step: S02
+  calibration_group: G02_trench_etch
+
+params:
+  files:
+    - "configs/params/global_params.txt"
+    - "configs/params/S02_trench_etch_params.txt"
+
+outputs:
+  step_dir: "runs/{run_id}/S02_trench_etch"
+  state_in: "runs/{run_id}/S01_onon_dep/state_out.json"
+  state_out: "runs/{run_id}/S02_trench_etch/state_out.json"
+  step_result: "runs/{run_id}/S02_trench_etch/step_result.json"
+  manifest: "runs/{run_id}/S02_trench_etch/manifest.json"
+
+nodes:
+  - id: device_main
+    type: device
+    action: run
+    template: device.dev04
+    extractor: default
+    inputs: {}
+    output: rve.device_main
+    result_file: "device_main_rve.json"
+
+  - id: device_aux
+    type: device
+    action: inherit
+    output: rve.device_aux
+
+  - id: onon_device
+    type: device
+    action: run
+    template: device.dev03
+    extractor: default
+    inputs: {}
+    output: rve.onon_device
+    result_file: "onon_device_rve.json"
+
+  - id: mat1
+    type: mat
+    action: run
+    template: mat.mat_tpl01
+    extractor: default
+    inputs:
+      device: rve.device_main
+    output: rve.mat1
+    result_file: "mat1_rve.json"
+
+  - id: mat2
+    type: mat
+    action: inherit
+    output: rve.mat2
+
+  - id: mat3
+    type: mat
+    action: run
+    template: mat.mat_tpl03
+    extractor: default
+    inputs:
+      device: rve.device_main
+    output: rve.mat3
+    result_file: "mat3_rve.json"
+
+  - id: mat4
+    type: mat
+    action: inherit
+    output: rve.mat4
+
+  - id: die
+    type: die
+    action: run
+    template: die.base
+    extractor: default
+    inputs:
+      mat1: rve.mat1
+      mat2: rve.mat2
+      mat3: rve.mat3
+      mat4: rve.mat4
+    output: rve.die
+    result_file: "die_rve.json"
+
+  - id: wafer
+    type: wafer
+    action: run
+    template: wafer.base
+    extractor: default
+    inputs:
+      die: rve.die
+      onon: rve.onon_device
+    output: wafer_result
+    result_file: "wafer_result.json"

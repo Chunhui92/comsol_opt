@@ -81,39 +81,32 @@ class WorkflowIntegrationTests(unittest.TestCase):
                 str(run_root),
             ]
             completed = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=True)
-            self.assertIn("Completed 15 steps", completed.stdout)
+            self.assertIn("Completed 2 steps", completed.stdout)
 
             run_dir = run_root / "mock_test"
-            s03 = json.loads((run_dir / "S03" / "state_out.json").read_text(encoding="utf-8"))
-            self.assertEqual(s03["wafer_inputs"]["mat1"]["source_step"], "S02")
-            self.assertEqual(s03["wafer_inputs"]["mat2"]["source_step"], "S03")
+            s02 = json.loads((run_dir / "S02" / "state_out.json").read_text(encoding="utf-8"))
+            self.assertEqual(s02["rve"]["device_aux"]["source_step"], "S00")
+            self.assertEqual(s02["rve"]["mat2"]["source_step"], "S00")
+            self.assertEqual(s02["rve"]["mat4"]["source_step"], "S00")
+            self.assertEqual(s02["rve"]["die"]["source_step"], "S02")
+            self.assertEqual(set(s02["rve"]), {"device_main", "device_aux", "onon_device", "mat1", "mat2", "mat3", "mat4", "die"})
 
-            s05a = json.loads((run_dir / "S05a" / "state_out.json").read_text(encoding="utf-8"))
-            self.assertEqual(s05a["device_rves"]["device_default"]["source_step"], "S04")
-            self.assertEqual(s05a["wafer_inputs"]["mat2"]["source_step"], "S05a")
-
-            s07_input = json.loads((run_dir / "S07" / "step_input.json").read_text(encoding="utf-8"))
-            s07_state = json.loads((run_dir / "S07" / "state_out.json").read_text(encoding="utf-8"))
-            self.assertTrue(s07_input["templates"]["wafer"].endswith("wafer_with_asi_template.mph"))
-            self.assertTrue(s07_state["wafer_inputs"]["aSi_layer"]["active"])
-
-            s08_input = json.loads((run_dir / "S08" / "step_input.json").read_text(encoding="utf-8"))
-            s08_state = json.loads((run_dir / "S08" / "state_out.json").read_text(encoding="utf-8"))
-            self.assertTrue(s08_input["templates"]["wafer"].endswith("wafer_base_template.mph"))
-            self.assertFalse(s08_state["wafer_inputs"]["aSi_layer"]["active"])
-
-            mat3 = s08_state["wafer_inputs"]["mat3"]
-            device2 = s08_state["device_rves"]["device2_for_mat3"]
-            self.assertEqual(device2["source_step"], "S08")
-            self.assertEqual(mat3["source_step"], "S08")
-            self.assertNotEqual(
-                s08_state["device_rves"]["device_default"]["stress_eff"]["sxx"],
-                device2["stress_eff"]["sxx"],
+            s02_input = json.loads((run_dir / "S02" / "step_input.json").read_text(encoding="utf-8"))
+            self.assertEqual([node["id"] for node in s02_input["nodes"][:3]], ["device_main", "device_aux", "onon_device"])
+            self.assertEqual(
+                s02_input["parameter_txt_order"],
+                ["global_params", "S02_trench_etch_params", "calibration_override"],
             )
+
+            manifest = json.loads((run_dir / "S02" / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["nodes"]["device_aux"]["action"], "inherit")
+            self.assertEqual(manifest["nodes"]["device_aux"]["source_step"], "S00")
+            self.assertTrue((run_dir / "S02" / "mat1_rve.json").exists())
+            self.assertTrue((run_dir / "S02" / "wafer_result.json").exists())
 
             with (run_dir / "summary.csv").open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
-            self.assertEqual(len(rows), 15)
+            self.assertEqual(len(rows), 2)
             loss = compute_loss_from_rows(rows, scale_x=30.0, scale_y=30.0)
             self.assertGreater(loss["loss"], 0.0)
 
@@ -176,14 +169,14 @@ class WorkflowIntegrationTests(unittest.TestCase):
                 "--mode",
                 "staged",
                 "--stages",
-                "G0_init,G1_ONON_base",
+                "G0_init,G2_trench_release",
             ]
             completed = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=True)
             self.assertIn("completed_stages=2", completed.stdout)
 
             calib_dir = run_root / "staged_test"
             g0 = calib_dir / "out" / "S00_G0_init"
-            g1 = calib_dir / "out" / "S01_G1_ONON_base"
+            g1 = calib_dir / "out" / "S02_G2_trench_release"
             self.assertTrue((g0 / "stage.log").exists())
             self.assertTrue((g0 / "best_params.yaml").exists())
             self.assertTrue((g0 / "best_summary.csv").exists())
@@ -196,8 +189,8 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertEqual(g1_trial_params["FEOL"], g0_params["FEOL"])
 
             g1_log = (g1 / "stage.log").read_text(encoding="utf-8")
-            self.assertIn("stage=G1_ONON_base", g1_log)
-            self.assertIn("params=ONON.sigma_O_base,ONON.sigma_N_base", g1_log)
+            self.assertIn("stage=G2_trench_release", g1_log)
+            self.assertIn("params=release.trench_etch_ONON", g1_log)
             self.assertTrue((g1 / ".cache").exists())
             self.assertFalse((g1 / "trials" / "trial_0000" / "flow" / ".cache").exists())
 
@@ -250,55 +243,34 @@ class ConfigTests(unittest.TestCase):
     def test_default_flow_config_loads_as_yaml(self):
         flow = load_config(ROOT / "configs" / "flow.yaml")
         self.assertEqual(flow["steps"][0]["id"], "S00")
-        self.assertEqual(flow["steps"][-1]["id"], "S10")
+        self.assertEqual(flow["steps"][-1]["id"], "S02")
+        self.assertIn("global", flow)
+        self.assertEqual(flow["steps"][0]["config"], "configs/steps/S00_init.yaml")
 
     def test_config_files_are_real_yaml_and_flow_is_readable(self):
         for path in (ROOT / "configs").glob("*.yaml"):
             text = path.read_text(encoding="utf-8")
             self.assertFalse(text.lstrip().startswith("{"), path.name)
-        long_lines = [
-            (index + 1, len(line))
-            for index, line in enumerate((ROOT / "configs" / "flow.yaml").read_text(encoding="utf-8").splitlines())
-            if len(line) > 120
-        ]
-        self.assertEqual(long_lines, [])
+        self.assertTrue(all(len(line) <= 120 for line in (ROOT / "configs" / "flow.yaml").read_text(encoding="utf-8").splitlines()))
 
-    def test_flow_generates_inherit_from_global_wafer_slots(self):
-        import comsol_opt.step_input as step_input
+    def test_layered_flow_expands_step_dag_and_txt_parameters(self):
+        from comsol_opt.flow_runner import load_flow_definition
 
-        flow = load_config(ROOT / "configs" / "flow.yaml")
-        self.assertEqual(flow["wafer_slots"], ["FEOL", "mat1", "mat2", "mat3", "ONON_layer", "aSi_layer"])
-        self.assertTrue(all("inherit" not in step["wafer_inputs"] for step in flow["steps"]))
-
-        step = flow["steps"][3]
-        generated = step_input.build_step_input(
-            step,
-            flow,
-            load_config(ROOT / "configs" / "params_nominal.yaml"),
-            ROOT / "state.json",
-            ROOT / "out",
-            {
-                "struct": ROOT / "params" / "struct.txt",
-                "stress": ROOT / "params" / "stress.txt",
-                "temp": ROOT / "params" / "temp.txt",
-            },
-        )
-        self.assertEqual(generated["wafer_inputs"]["update"], ["mat2"])
-        self.assertEqual(generated["wafer_inputs"]["inherit"], ["FEOL", "mat1", "mat3", "ONON_layer", "aSi_layer"])
+        flow = load_flow_definition(ROOT / "configs" / "flow.yaml", ROOT)
+        self.assertEqual([step["id"] for step in flow["steps"]], ["S00", "S02"])
+        s02 = flow["steps"][1]
+        self.assertEqual(s02["nodes"][1]["action"], "inherit")
+        self.assertEqual(s02["parameters"]["release"]["trench_etch_ONON"], 0.75)
+        self.assertEqual(s02["parameter_txt_order"], ["global_params", "S02_trench_etch_params", "calibration_override"])
 
     def test_default_paths_are_flattened(self):
-        flow = load_config(ROOT / "configs" / "flow.yaml")
+        flow = load_config(ROOT / "configs" / "templates.yaml")
         template_paths = []
         for section in flow["templates"].values():
-            template_paths.extend(section.values())
+            for spec in section.values():
+                template_paths.append(spec["path"])
         self.assertTrue(template_paths)
-        self.assertTrue(all(path.startswith("models/") for path in template_paths))
-        self.assertTrue(all("models/templates/" not in path for path in template_paths))
-
-        txt_set = prepare_parameter_txt_set(ROOT)
-        self.assertEqual(txt_set.files["struct"], ROOT / "params" / "struct.txt")
-        self.assertEqual(txt_set.files["stress"], ROOT / "params" / "stress.txt")
-        self.assertEqual(txt_set.files["temp"], ROOT / "params" / "temp.txt")
+        self.assertTrue(all(path.startswith("models/templates/") for path in template_paths))
 
     def test_parameter_map_config_drives_txt_mapping(self):
         parameter_map = load_config(ROOT / "configs" / "parameter_map.yaml")

@@ -16,10 +16,11 @@ class StepCache:
         payload = {
             "step_id": step_input["step_id"],
             "templates": step_input["templates"],
-            "run_devices": step_input["run_devices"],
-            "run_mats": step_input["run_mats"],
-            "mat_inputs": step_input["mat_inputs"],
-            "wafer_inputs": step_input["wafer_inputs"],
+            "nodes": step_input.get("nodes", []),
+            "run_devices": step_input.get("run_devices", []),
+            "run_mats": step_input.get("run_mats", []),
+            "mat_inputs": step_input.get("mat_inputs", {}),
+            "wafer_inputs": step_input.get("wafer_inputs", {}),
             "parameters": step_input["parameters"],
             "state_in": state_in,
         }
@@ -35,6 +36,10 @@ class StepCache:
         output_dir = Path(output_dir)
         shutil.copyfile(state_src, output_dir / "state_out.json")
         shutil.copyfile(result_src, output_dir / "step_result.json")
+        for path in cache_dir.iterdir():
+            if path.name in {"state_out.json", "step_result.json"}:
+                continue
+            shutil.copyfile(path, output_dir / path.name)
         return True
 
     def store(self, key, output_dir):
@@ -43,3 +48,7 @@ class StepCache:
         output_dir = Path(output_dir)
         shutil.copyfile(output_dir / "state_out.json", cache_dir / "state_out.json")
         shutil.copyfile(output_dir / "step_result.json", cache_dir / "step_result.json")
+        for path in output_dir.glob("*.json"):
+            if path.name in {"step_input.json", "state_out.json", "step_result.json"}:
+                continue
+            shutil.copyfile(path, cache_dir / path.name)

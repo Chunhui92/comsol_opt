@@ -50,6 +50,7 @@ class WaferState:
     wafer_result: Dict[str, float]
     device_rves: Dict[str, Dict[str, Any]]
     wafer_inputs: Dict[str, Dict[str, Any]]
+    rve: Dict[str, Dict[str, Any]]
     materials_state: Dict[str, Any]
     geometry_state: Dict[str, Any]
     history: List[Dict[str, Any]]
@@ -60,24 +61,26 @@ class WaferState:
             "step_id",
             "step_name",
             "wafer_result",
-            "device_rves",
-            "wafer_inputs",
             "materials_state",
             "geometry_state",
         ]
         missing = [key for key in required if key not in data]
         if missing:
             raise ValueError(f"WaferState missing keys: {missing}")
-        for name, rve in data["device_rves"].items():
+        rve_map = data.get("rve", {})
+        for name, rve in rve_map.items():
             RveResult.from_dict(rve)
-        for name, rve in data["wafer_inputs"].items():
+        for name, rve in data.get("device_rves", {}).items():
+            RveResult.from_dict(rve)
+        for name, rve in data.get("wafer_inputs", {}).items():
             RveResult.from_dict(rve)
         return cls(
             step_id=str(data["step_id"]),
             step_name=str(data["step_name"]),
             wafer_result={key: float(value) for key, value in data["wafer_result"].items()},
-            device_rves=dict(data["device_rves"]),
-            wafer_inputs=dict(data["wafer_inputs"]),
+            device_rves=dict(data.get("device_rves", {})),
+            wafer_inputs=dict(data.get("wafer_inputs", {})),
+            rve=dict(rve_map),
             materials_state=dict(data["materials_state"]),
             geometry_state=dict(data["geometry_state"]),
             history=list(data.get("history", [])),
@@ -100,44 +103,46 @@ class StepInput:
     parameter_txt_paths: Dict[str, str]
     state_in: Path
     output_dir: Path
+    nodes: List[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, data):
-        required = [
+        base_required = [
             "step_id",
             "step_name",
             "process_type",
             "update_rule",
             "templates",
-            "run_devices",
-            "run_mats",
-            "mat_inputs",
             "run_wafer",
-            "wafer_inputs",
             "parameters",
             "parameter_txt_paths",
             "state_in",
             "output_dir",
         ]
+        required = list(base_required)
+        if "nodes" not in data:
+            required.extend(["run_devices", "run_mats", "mat_inputs", "wafer_inputs"])
         missing = [key for key in required if key not in data]
         if missing:
             raise ValueError(f"StepInput missing keys: {missing}")
-        for key in ("struct", "stress", "temp"):
-            if key not in data["parameter_txt_paths"]:
-                raise ValueError(f"StepInput.parameter_txt_paths missing {key}")
+        if "nodes" not in data:
+            for key in ("struct", "stress", "temp"):
+                if key not in data["parameter_txt_paths"]:
+                    raise ValueError(f"StepInput.parameter_txt_paths missing {key}")
         return cls(
             step_id=str(data["step_id"]),
             step_name=str(data["step_name"]),
             process_type=str(data["process_type"]),
             update_rule=str(data["update_rule"]),
             templates=dict(data["templates"]),
-            run_devices=list(data["run_devices"]),
-            run_mats=list(data["run_mats"]),
-            mat_inputs=dict(data["mat_inputs"]),
+            run_devices=list(data.get("run_devices", [])),
+            run_mats=list(data.get("run_mats", [])),
+            mat_inputs=dict(data.get("mat_inputs", {})),
             run_wafer=bool(data["run_wafer"]),
-            wafer_inputs=dict(data["wafer_inputs"]),
+            wafer_inputs=dict(data.get("wafer_inputs", {})),
             parameters=dict(data["parameters"]),
             parameter_txt_paths=dict(data["parameter_txt_paths"]),
             state_in=Path(data["state_in"]),
             output_dir=Path(data["output_dir"]),
+            nodes=list(data.get("nodes", [])),
         )

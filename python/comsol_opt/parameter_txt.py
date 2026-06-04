@@ -80,3 +80,52 @@ def _unit_suffix(value_token, configured_unit):
     if configured_unit:
         return f"[{configured_unit}]"
     return ""
+
+
+def parse_parameter_txt(path):
+    """Parse COMSOL parameter txt rows into name -> expression metadata."""
+    params = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("%"):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        expression = parts[1]
+        params[name] = {
+            "expression": expression,
+            "value": expression_to_float(expression),
+            "description": " ".join(parts[2:]),
+        }
+    return params
+
+
+def parse_parameter_txt_files(paths):
+    merged = {}
+    for path in paths:
+        merged.update(parse_parameter_txt(path))
+    return merged
+
+
+def expression_to_float(expression):
+    """Convert simple COMSOL numeric expressions like 100[MPa] to SI-ish floats."""
+    match = re.match(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:\[(.+)\])?\s*$", str(expression))
+    if not match:
+        raise ValueError(f"Unsupported parameter expression: {expression}")
+    value = float(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        None: 1.0,
+        "": 1.0,
+        "Pa": 1.0,
+        "MPa": 1.0e6,
+        "GPa": 1.0e9,
+        "m": 1.0,
+        "nm": 1.0e-9,
+        "um": 1.0e-6,
+        "kg/m^3": 1.0,
+        "degC": 1.0,
+    }
+    return value * multipliers.get(unit, 1.0)

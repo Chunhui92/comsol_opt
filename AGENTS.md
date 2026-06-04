@@ -8,8 +8,9 @@ The intended flow is:
 
 ```text
 process step
-  -> device RVE
-  -> parallel mat1/mat2/mat3 RVEs
+  -> device_main/device_aux/onon_device RVEs
+  -> parallel mat1/mat2/mat3/mat4 RVEs
+  -> die RVE
   -> wafer model
   -> bow_x/bow_y comparison
   -> staged calibration
@@ -52,19 +53,21 @@ python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trial
 Run selected staged calibration:
 
 ```bash
-python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_init,S01 --run-id staged_001 --n-trials 5
+python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_init,G2_trench_release --run-id staged_001 --n-trials 5
 ```
 
 ## Repository Layout
 
-- `configs/flow.yaml`: S00-S10 process flow, RVE dependencies, wafer template selection, calibration groups.
-- `configs/params_nominal.yaml`: nominal process/material/geometry parameters.
+- `configs/flow.yaml`: layered DAG entrypoint; references enabled per-step YAML files.
+- `configs/steps/`: per-step DAG configs with explicit node `run` / `inherit` actions.
+- `configs/templates.yaml`: COMSOL template registry.
+- `configs/extractors.yaml`: study/evaluation/extractor tag registry.
+- `configs/params/`: COMSOL parameter TXT files merged in runtime order.
+- `configs/params_nominal.yaml`: legacy/mock nominal process/material/geometry parameters and calibration fallback input.
 - `configs/calibration_space.yaml`: parameter bounds for staged/global calibration.
 - `configs/parameter_map.yaml`: Python parameter key to COMSOL txt file/name mapping.
-- `configs/template_tags.yaml`: assumed COMSOL study/evaluation tags.
-- `params/struct.txt`: COMSOL structural parameter file.
-- `params/stress.txt`: COMSOL stress/release parameter file.
-- `params/temp.txt`: COMSOL temperature parameter file.
+- `configs/template_tags.yaml`: legacy assumed COMSOL study/evaluation tags.
+- `params/struct.txt`, `params/stress.txt`, `params/temp.txt`: legacy COMSOL parameter files for compatibility tests.
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.
@@ -73,26 +76,23 @@ python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_in
 
 ## COMSOL Parameter Contract
 
-The Python layer writes three parameter txt files for each step/trial:
-
-- `struct`
-- `stress`
-- `temp`
-
-The paths are recorded in `step_input.json` under `parameter_txt_paths`. A real COMSOL Java worker should load all three files before solving any device, mat, or wafer model.
+The layered Python flow copies COMSOL parameter TXT files into each step directory.
+The load order is recorded in `step_input.json` as `parameter_txt_order`, and paths are recorded under `parameter_txt_paths`.
+A real COMSOL Java worker should load these files in order before solving any device, mat, die, or wafer model.
 
 Do not hard-code parameter values in Java. Treat the txt files as the runtime parameter source.
 
-Keep parameter routing in `configs/parameter_map.yaml`. Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`. `prior` is the nominal value; `scale` is the denominator for regularization against that prior.
+Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`.
+`prior` is the nominal value; `scale` is the denominator for regularization against that prior.
+`configs/parameter_map.yaml` remains for the legacy three-file parameter writer.
 
 ## RVE and State Rules
 
-- `mat1`, `mat2`, and `mat3` are parallel wafer inputs, not a serial chain.
-- `mat1` and `mat2` use `device_default`.
-- `mat3` uses `device2_for_mat3`.
-- If a step does not update a wafer input slot, inherit it from the previous `state_out.json`.
-- `configs/flow.yaml` declares `wafer_slots` once; steps should normally list only `wafer_inputs.update`.
-- `step_input.py` computes `wafer_inputs.inherit` from `wafer_slots` before writing `step_input.json`.
+- `mat1`, `mat2`, `mat3`, and `mat4` are parallel die inputs, not a serial chain.
+- `device_main` normally feeds mat1/mat2/mat3; `device_aux` normally feeds mat4.
+- `die` receives mat1~4. `wafer` receives only `rve.die` and `rve.onon_device`.
+- Each node in `configs/steps/*.yaml` must explicitly declare `action: run` or `action: inherit`.
+- Inherited nodes must exist in the previous `state_out.json` under `rve.<node>` and must have `valid=true`.
 - If `run_wafer` is false, the backend should preserve the incoming `wafer_result`, skip history append, and set `wafer_skipped=true`.
 - `ONON.sigma_O_base` and `ONON.sigma_N_base` are only set at S01.
 - Later O/N changes use release factors only.
@@ -110,7 +110,7 @@ SimulationBackend.run_step(step_input_path) -> dict
 Available backends:
 
 - `dryrun`: validates and writes `step_input.json` only.
-- `mock`: runs deterministic Python mock physics and writes `state_out.json` / `step_result.json`.
+- `mock`: runs deterministic Python mock physics and writes `state_out.json`, `step_result.json`, `manifest.json`, and node result files.
 - `comsol`: reserved for invoking the Java COMSOL worker.
 
 The Java COMSOL worker must output the same JSON shape as the mock backend.
@@ -121,12 +121,12 @@ Stage trials share cache entries through `runs/<run-id>/out/<step>_<group>/.cach
 
 ## Current Roadmap
 
-Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are COMSOL calibration command plumbing, complete Java worker state inheritance, and start/stop checkpointed staged reruns.
+Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are COMSOL calibration command plumbing, complete Java DAG worker state inheritance, remaining real step configs, and start/stop checkpointed staged reruns.
 
 ## Development Rules
 
 - Use standard library compatibility where practical. Tests currently do not require `pytest`.
-- `PyYAML` is required because project configuration files use real YAML syntax.
+- Project configuration files use real YAML syntax. `config_io` prefers `PyYAML` and falls back to `ruamel.yaml` when available.
 - If `Optuna` is absent, calibration falls back to deterministic random search.
 - Before reporting completion, run `python3 -m unittest tests/test_workflow.py -v`.
 - Use `dump_data` for new JSON/YAML writes. `dump_json` remains only as a compatibility alias.

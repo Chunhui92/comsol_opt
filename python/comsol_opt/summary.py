@@ -26,8 +26,8 @@ def write_summary(run_dir, steps, experiment):
                 "bow_y_exp_um": exp.get("bow_y_um", ""),
                 "weight_x": exp.get("weight_x", 1.0),
                 "weight_y": exp.get("weight_y", 1.0),
-                "wafer_template": step["wafer_template"],
-                "updated_slots": ";".join(step["wafer_inputs"]["update"]),
+                "wafer_template": _step_wafer_template(step),
+                "updated_slots": ";".join(_step_updated_slots(step)),
             }
         )
     path = Path(run_dir) / "summary.csv"
@@ -36,3 +36,18 @@ def write_summary(run_dir, steps, experiment):
         writer.writeheader()
         writer.writerows(rows)
     return path
+
+
+def _step_wafer_template(step):
+    if "wafer_template" in step:
+        return step["wafer_template"]
+    for node in step.get("nodes", []):
+        if node.get("type") == "wafer":
+            return node.get("template", "")
+    return ""
+
+
+def _step_updated_slots(step):
+    if "wafer_inputs" in step:
+        return step["wafer_inputs"].get("update", [])
+    return [node["id"] for node in step.get("nodes", []) if node.get("action") == "run"]

@@ -1,0 +1,111 @@
+step:
+  id: S00
+  name: init
+  process_type: init
+  update_rule: init
+  experiment_step: S00
+  calibration_group: G00_init
+
+params:
+  files:
+    - "configs/params/global_params.txt"
+    - "configs/params/S00_init_params.txt"
+
+outputs:
+  step_dir: "runs/{run_id}/S00_init"
+  state_in: null
+  state_out: "runs/{run_id}/S00_init/state_out.json"
+  step_result: "runs/{run_id}/S00_init/step_result.json"
+  manifest: "runs/{run_id}/S00_init/manifest.json"
+
+nodes:
+  - id: device_main
+    type: device
+    action: run
+    template: device.dev01
+    extractor: default
+    inputs: {}
+    output: rve.device_main
+    result_file: "device_main_rve.json"
+
+  - id: device_aux
+    type: device
+    action: run
+    template: device.dev02
+    extractor: default
+    inputs: {}
+    output: rve.device_aux
+    result_file: "device_aux_rve.json"
+
+  - id: onon_device
+    type: device
+    action: run
+    template: device.dev03
+    extractor: default
+    inputs: {}
+    output: rve.onon_device
+    result_file: "onon_device_rve.json"
+
+  - id: mat1
+    type: mat
+    action: run
+    template: mat.mat_tpl01
+    extractor: default
+    inputs:
+      device: rve.device_main
+    output: rve.mat1
+    result_file: "mat1_rve.json"
+
+  - id: mat2
+    type: mat
+    action: run
+    template: mat.mat_tpl02
+    extractor: default
+    inputs:
+      device: rve.device_main
+    output: rve.mat2
+    result_file: "mat2_rve.json"
+
+  - id: mat3
+    type: mat
+    action: run
+    template: mat.mat_tpl03
+    extractor: default
+    inputs:
+      device: rve.device_main
+    output: rve.mat3
+    result_file: "mat3_rve.json"
+
+  - id: mat4
+    type: mat
+    action: run
+    template: mat.mat_tpl04
+    extractor: default
+    inputs:
+      device: rve.device_aux
+    output: rve.mat4
+    result_file: "mat4_rve.json"
+
+  - id: die
+    type: die
+    action: run
+    template: die.base
+    extractor: default
+    inputs:
+      mat1: rve.mat1
+      mat2: rve.mat2
+      mat3: rve.mat3
+      mat4: rve.mat4
+    output: rve.die
+    result_file: "die_rve.json"
+
+  - id: wafer
+    type: wafer
+    action: run
+    template: wafer.base
+    extractor: default
+    inputs:
+      die: rve.die
+      onon: rve.onon_device
+    output: wafer_result
+    result_file: "wafer_result.json"

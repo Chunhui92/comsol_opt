@@ -5,6 +5,7 @@ VALID_UPDATE_RULES = {
     "init",
     "onon_deposition",
     "onon_trench_release",
+    "trench_etch_release",
     "dpillar_onon_release",
     "mat_remove_onon_release",
     "final",
@@ -44,7 +45,7 @@ def apply_process_update(step_input, state):
         mat["ONON"]["sigma_O_current"] = onon["sigma_O_base"]
         mat["ONON"]["sigma_N_current"] = onon["sigma_N_base"]
         _update_onon_layer(step_id, state)
-    elif rule == "onon_trench_release":
+    elif rule in {"onon_trench_release", "trench_etch_release"}:
         _release_onon(step_id, state, "trench_etch_ONON", params["release"]["trench_etch_ONON"])
     elif rule == "dpillar_onon_release":
         _release_onon(step_id, state, "dpillar_form_ONON", params["release"]["dpillar_form_ONON"])
