@@ -18,6 +18,12 @@ process step
 
 COMSOL model geometry, studies, and evaluation tags are assumed to be stable. The Python layer owns state transfer, parameter file generation, backend dispatch, mock validation, loss calculation, and calibration.
 
+Current implementation status:
+
+- The Python orchestrator and mock backend follow the layered step DAG in `configs/steps/*.yaml`: each node reads its declared template/input references, stages parameter TXT files, runs or inherits, writes node result files, updates `state_out.json`, and finally runs wafer after die.
+- The Java COMSOL worker is still a legacy first-pass skeleton. It must be updated to parse the active `nodes` contract, honor `run` / `inherit`, load `parameter_txt_order`, write `manifest.json`, and write each node's configured `result_file`.
+- Real COMSOL RVE transfer is not implemented yet in Java. The worker still needs to read upstream `rve.*` results from `state_in.json`, inject those effective stress/stiffness/density values into downstream COMSOL models, then extract and persist the next RVE before advancing to die and wafer.
+
 ## Important Commands
 
 Run all tests:
@@ -109,7 +115,7 @@ Available backends:
 
 - `dryrun`: validates and writes `step_input.json` only.
 - `mock`: runs deterministic Python mock physics and writes `state_out.json`, `step_result.json`, `manifest.json`, and node result files.
-- `comsol`: reserved for invoking the Java COMSOL worker.
+- `comsol`: reserved for invoking the Java COMSOL worker. The current Java file is not yet equivalent to the active DAG mock backend.
 
 The Java COMSOL worker must output the same JSON shape as the mock backend.
 
@@ -119,7 +125,7 @@ Stage trials share cache entries through `runs/<run-id>/out/<step>_<group>/.cach
 
 ## Current Roadmap
 
-Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are COMSOL calibration command plumbing, complete Java DAG worker state inheritance, remaining real step configs, and start/stop checkpointed staged reruns.
+Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are Java DAG worker parity with the mock backend, real COMSOL RVE injection between node models, remaining real step configs, and start/stop checkpointed staged reruns.
 
 ## Development Rules
 
