@@ -22,10 +22,29 @@ class StepCache:
             "mat_inputs": step_input.get("mat_inputs", {}),
             "wafer_inputs": step_input.get("wafer_inputs", {}),
             "parameters": step_input["parameters"],
+            "parameter_txt_files": self._parameter_txt_payload(step_input),
             "state_in": state_in,
         }
         encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    def _parameter_txt_payload(self, step_input):
+        paths = step_input.get("parameter_txt_paths", {})
+        order = step_input.get("parameter_txt_order", list(paths))
+        payload = []
+        for key in order:
+            path = paths.get(key)
+            if path is None:
+                continue
+            parameter_path = Path(path)
+            payload.append(
+                {
+                    "key": key,
+                    "path": str(parameter_path),
+                    "sha256": hashlib.sha256(parameter_path.read_bytes()).hexdigest(),
+                }
+            )
+        return payload
 
     def restore(self, key, output_dir):
         cache_dir = self.cache_root / key

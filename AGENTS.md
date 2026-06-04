@@ -21,7 +21,8 @@ COMSOL model geometry, studies, and evaluation tags are assumed to be stable. Th
 Current implementation status:
 
 - The Python orchestrator and mock backend follow the layered step DAG in `configs/steps/*.yaml`: each node reads its declared template/input references, stages parameter TXT files, runs or inherits, writes node result files, updates `state_out.json`, and finally runs wafer after die.
-- The Java COMSOL worker now has a first-pass DAG skeleton: it parses the active `nodes` contract, honors `run` / `inherit`, loads `parameter_txt_order`, writes `manifest.json`, writes each node's configured `result_file`, and carries `rve.*` state forward.
+- The Python validator fails fast on layered DAG mistakes: invalid update rules, unknown node actions/types, unresolved templates, bad outputs, missing required inputs, and unavailable upstream RVE references.
+- The Java COMSOL worker now has a first-pass DAG skeleton: it parses the active `nodes` contract, honors `run` / `inherit`, loads `parameter_txt_order`, writes `manifest.json`, writes each node's configured `result_file`, carries `rve.*` state forward, preserves `materials_state` / `geometry_state`, and appends wafer history when wafer runs.
 - Real COMSOL RVE transfer uses provisional assumptions in Java. Upstream RVE values are injected into downstream COMSOL models as parameters named `input_<slot>_sxx`, `input_<slot>_syy`, `input_<slot>_rho`, `input_<slot>_d11`, and `input_<slot>_d22`. Replace these names once the real COMSOL templates expose their expected parameter/table inputs.
 
 ## Important Commands
@@ -84,6 +85,10 @@ The layered Python flow copies COMSOL parameter TXT files into each step directo
 The load order is recorded in `step_input.json` as `parameter_txt_order`, and paths are recorded under `parameter_txt_paths`.
 A real COMSOL Java worker should load these files in order before solving any device, mat, die, or wafer model.
 
+When no explicit `--params` file is supplied, each layered step uses parameters parsed from its own TXT files.
+When calibration supplies a params YAML, that file is treated as the trial/global override for all enabled steps.
+Step cache keys include staged parameter TXT file content hashes, not just mapped Python parameters.
+
 Do not hard-code parameter values in Java. Treat the txt files as the runtime parameter source.
 
 Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`.
@@ -122,6 +127,9 @@ The Java COMSOL worker must output the same JSON shape as the mock backend.
 Staged calibration writes under `runs/<run-id>/out/<step>_<group>/`. Each stage must contain `stage.log`, per-trial flow outputs, `calibration_history.csv`, `best_params.yaml`, and `best_summary.csv`. Later stages must start from the previous stage's best params.
 
 Stage trials share cache entries through `runs/<run-id>/out/<step>_<group>/.cache`. Global calibration uses `runs/<run-id>/.cache`. Do not put caches under individual trial flow directories unless deliberately debugging cache isolation.
+
+Default calibration only uses groups whose `target_step` is enabled in `configs/flow.yaml`.
+If a user explicitly requests a stage targeting a disabled or missing step, fail early instead of silently sampling unused parameters.
 
 ## Current Roadmap
 

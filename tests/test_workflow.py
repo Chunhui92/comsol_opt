@@ -1,5 +1,6 @@
 import csv
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,8 +13,9 @@ PYTHON_DIR = ROOT / "python"
 sys.path.insert(0, str(PYTHON_DIR))
 
 from comsol_opt.config_io import dump_data, load_config, load_json
+from comsol_opt.cache_manager import StepCache
 from comsol_opt.flow import prepare_parameter_txt_set, run_flow
-from comsol_opt.calibration import parameter_regularization_loss
+from comsol_opt.calibration import active_calibration_space, parameter_regularization_loss, select_groups
 from comsol_opt.loss import compute_loss_from_rows
 from comsol_opt.backends import make_backend
 from comsol_opt.parameter_txt import ParameterTxtSet
@@ -109,6 +111,54 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             loss = compute_loss_from_rows(rows, scale_x=30.0, scale_y=30.0)
             self.assertGreater(loss["loss"], 0.0)
+
+    def test_layered_flow_uses_each_step_parameters_without_global_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(ROOT / "configs", root / "configs")
+            s02_params = root / "configs" / "params" / "S02_trench_etch_params.txt"
+            s02_params.write_text(
+                s02_params.read_text(encoding="utf-8").replace("r_ONON_trench           0.75", "r_ONON_trench           0.42"),
+                encoding="utf-8",
+            )
+            result = run_flow(
+                flow_path=root / "configs" / "flow.yaml",
+                params_path=None,
+                experiment_path=ROOT / "configs" / "experiments" / "bow_experiment.csv",
+                backend=make_backend("dryrun"),
+                run_id="step_params",
+                runs_root=root / "runs",
+                repo_root=root,
+            )
+            s00_input = load_json(result["run_dir"] / "S00" / "step_input.json")
+            s02_input = load_json(result["run_dir"] / "S02" / "step_input.json")
+            self.assertEqual(s00_input["parameters"]["release"]["trench_etch_ONON"], 0.75)
+            self.assertEqual(s02_input["parameters"]["release"]["trench_etch_ONON"], 0.42)
+
+    def test_step_cache_key_includes_parameter_txt_file_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            params = root / "params.txt"
+            state = root / "state.json"
+            step_input = root / "step_input.json"
+            params.write_text("x 1 first\n", encoding="utf-8")
+            dump_data(state, {"wafer_result": {}, "rve": {}, "materials_state": {}, "geometry_state": {}, "history": []})
+            dump_data(
+                step_input,
+                {
+                    "step_id": "S00",
+                    "templates": {},
+                    "nodes": [],
+                    "parameters": {},
+                    "parameter_txt_paths": {"params": str(params)},
+                    "parameter_txt_order": ["params"],
+                    "state_in": str(state),
+                },
+            )
+            cache = StepCache(root / ".cache")
+            first_key = cache.key_for(step_input)
+            params.write_text("x 2 changed\n", encoding="utf-8")
+            self.assertNotEqual(first_key, cache.key_for(step_input))
 
     def test_dryrun_generates_step_inputs_without_results(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -317,6 +367,24 @@ class ConfigTests(unittest.TestCase):
                         missing.append((group["name"], spec["key"], key))
         self.assertEqual(missing, [])
 
+    def test_calibration_defaults_target_only_enabled_flow_steps(self):
+        space = load_config(ROOT / "configs" / "calibration_space.yaml")
+        active = active_calibration_space(space, ROOT / "configs" / "flow.yaml", ROOT)
+        self.assertEqual([group["name"] for group in active["groups"]], ["G0_init", "G2_trench_release"])
+        groups = select_groups(space, None, ROOT / "configs" / "flow.yaml", ROOT)
+        self.assertEqual([group["name"] for group in groups], ["G0_init", "G2_trench_release"])
+        with self.assertRaises(ValueError):
+            select_groups(space, "G1_ONON_base", ROOT / "configs" / "flow.yaml", ROOT)
+
+    def test_layered_flow_validation_rejects_bad_node_references(self):
+        from comsol_opt.flow_runner import load_flow_definition
+        from comsol_opt.step_input import validate_flow
+
+        flow = load_flow_definition(ROOT / "configs" / "flow.yaml", ROOT)
+        flow["steps"][0]["nodes"][-1]["inputs"]["die"] = "rve.missing_die"
+        with self.assertRaises(ValueError):
+            validate_flow(flow)
+
     def test_prior_scale_regularization_uses_normalized_distance(self):
         specs = [
             {"key": "x", "prior": 10.0, "scale": 2.0},
@@ -344,6 +412,9 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("resultFile", text)
         self.assertIn("manifest.json", text)
         self.assertIn("\"rve\"", text)
+        self.assertIn("materials_state", text)
+        self.assertIn("historyJson", text)
+        self.assertIn("waferInputsToJson", text)
 
     def test_flow_responsibilities_are_split_into_focused_modules(self):
         import comsol_opt.flow_runner as flow_runner

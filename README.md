@@ -58,6 +58,7 @@ configs/
 - `configs/calibration_space.yaml` stores optimizer bounds, priors, scales, and units.
 
 Legacy compatibility files live under `archive/legacy_config_scheme/`.
+The active seed flow currently enables S00 and S02. `configs/calibration_space.yaml` can keep planned later stages, but default calibration only selects groups whose target step is enabled in `configs/flow.yaml`.
 
 ## Parameter Contract
 
@@ -65,6 +66,8 @@ For each step, the orchestrator copies parameter TXT files into the step output 
 
 - `parameter_txt_paths`: actual staged TXT file paths.
 - `parameter_txt_order`: load order, normally `global_params -> step params -> calibration_override`.
+
+When no explicit `--params` file is supplied, each layered DAG step uses parameters parsed from its own TXT stack. An explicit params YAML is treated as a trial/global override for calibration. Cache keys include staged TXT file content hashes, so COMSOL-only TXT changes invalidate cached step outputs.
 
 TXT parsing rules:
 
@@ -89,6 +92,8 @@ Each `state_out.json` contains:
 
 The wafer node consumes only `rve.die` and `rve.onon_device`. The die node consumes only mat1 through mat4. Inherited nodes must already exist in `state_in` and have `valid=true`.
 
+The Python validator checks DAG node actions, types, outputs, required inputs, template resolution, and topological RVE references before dispatching a backend.
+
 ## Outputs
 
 Each mock or COMSOL step should write:
@@ -106,4 +111,6 @@ Global calibration cache lives under `runs/<run-id>/.cache`. Staged calibration 
 
 ## COMSOL Worker
 
-`java/ComsolStepWorker.java` is still a first-pass skeleton. It must be updated to the active `nodes` contract before real COMSOL runs are treated as production-equivalent to the mock backend. See `docs/roadmap.md`.
+`java/ComsolStepWorker.java` follows the active `nodes` contract: it loads TXT parameters in `parameter_txt_order`, runs or inherits DAG nodes, writes configured node result files, writes `manifest.json`, preserves material/geometry/history state, and outputs the same high-level JSON shape as the mock backend.
+
+The worker still uses provisional RVE transfer assumptions. It injects upstream values as `input_<slot>_sxx`, `input_<slot>_syy`, `input_<slot>_rho`, `input_<slot>_d11`, and `input_<slot>_d22`. Validate or replace these names against the real COMSOL templates before production calibration.

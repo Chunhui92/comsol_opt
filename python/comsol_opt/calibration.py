@@ -23,6 +23,27 @@ def all_parameter_specs(calibration_space):
     return specs
 
 
+def enabled_step_ids(flow_path, repo_root):
+    flow = load_flow_definition(flow_path, repo_root)
+    return {step["id"] for step in flow.get("steps", [])}
+
+
+def active_calibration_space(calibration_space, flow_path, repo_root):
+    active_steps = enabled_step_ids(flow_path, repo_root)
+    if not active_steps:
+        return calibration_space
+    filtered = [
+        group
+        for group in calibration_space["groups"]
+        if group.get("target_step", group.get("start_step")) in active_steps
+    ]
+    if not filtered:
+        raise ValueError("No calibration groups target enabled flow steps")
+    result = dict(calibration_space)
+    result["groups"] = filtered
+    return result
+
+
 def get_param(params, dotted_key):
     value = params
     for part in dotted_key.split("."):
@@ -79,10 +100,17 @@ def stage_trial_params(current_params, specs, trial_index, seed):
     return params
 
 
-def select_groups(calibration_space, stages):
+def select_groups(calibration_space, stages, flow_path=None, repo_root=None):
     groups = calibration_space["groups"]
+    active_steps = enabled_step_ids(flow_path, repo_root) if flow_path is not None and repo_root is not None else None
     if not stages:
-        return groups
+        if active_steps is None:
+            return groups
+        return [
+            group
+            for group in groups
+            if group.get("target_step", group.get("start_step")) in active_steps
+        ]
     requested = [item.strip() for item in stages.split(",") if item.strip()]
     selected = []
     for name in requested:
@@ -93,7 +121,11 @@ def select_groups(calibration_space, stages):
         ]
         if not matches:
             raise ValueError(f"Unknown calibration stage: {name}")
-        selected.extend(matches)
+        for group in matches:
+            target_step = group.get("target_step", group.get("start_step"))
+            if active_steps is not None and target_step not in active_steps:
+                raise ValueError(f"Calibration stage {group['name']} targets disabled or missing step {target_step}")
+            selected.append(group)
     return selected
 
 
@@ -121,7 +153,9 @@ def run_staged_calibration(
     base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
-    groups = select_groups(calibration_space, stages)
+    groups = select_groups(calibration_space, stages, flow_path, repo_root)
+    if not groups:
+        raise ValueError("No calibration groups target enabled flow steps")
     calib_dir = Path(runs_root) / run_id
     out_dir = calib_dir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -319,6 +353,7 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
     base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
+    calibration_space = active_calibration_space(calibration_space, flow_path, repo_root)
     specs = all_parameter_specs(calibration_space)
     calib_dir = Path(runs_root) / run_id
     trials_root = calib_dir / "trials"
@@ -398,6 +433,7 @@ def run_optuna_or_fallback_calibration(
     base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
+    calibration_space = active_calibration_space(calibration_space, flow_path, repo_root)
     specs = all_parameter_specs(calibration_space)
     calib_dir = Path(runs_root) / run_id
     trials_root = calib_dir / "trials"

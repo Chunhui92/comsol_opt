@@ -117,8 +117,8 @@ def run_flow(
     cache_root=None,
 ):
     flow = load_flow_definition(flow_path, repo_root)
-    params = _load_initial_params(params_path, flow)
-    layered_param_override = params if flow.get("layout") == "layered_dag" else None
+    param_override = load_config(params_path) if params_path is not None else None
+    params = _initial_params(param_override, flow)
     validate_flow(flow)
     run_dir = Path(runs_root) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -127,16 +127,20 @@ def run_flow(
     dump_data(initial_path, initial_state(params))
     state_in_path = initial_path
 
-    txt_set = prepare_parameter_txt_set(repo_root, parameter_map_path)
+    txt_set = None
+    if flow.get("layout") != "layered_dag":
+        txt_set = prepare_parameter_txt_set(repo_root, parameter_map_path)
     cache = StepCache(cache_root or run_dir / ".cache") if use_cache else None
     completed = 0
     for step in flow["steps"]:
         step_dir = run_dir / step["id"]
         step_dir.mkdir(parents=True, exist_ok=True)
         if "nodes" in step:
-            params = layered_param_override or step["parameters"]
+            params = param_override or step["parameters"]
             parameter_txt_paths = _copy_layered_parameter_files(repo_root, step, step_dir / "parameters")
         else:
+            if txt_set is None:
+                raise ValueError("Legacy flow requires a parameter txt set")
             parameter_txt_paths = txt_set.write_trial_files(step_dir / "parameters", flatten_params(params))
         step_input = build_step_input(step, flow, params, state_in_path, step_dir, parameter_txt_paths)
         step_input_path = step_dir / "step_input.json"
@@ -160,16 +164,14 @@ def run_flow(
     return {"run_dir": run_dir, "completed": completed}
 
 
-def _load_initial_params(params_path, flow):
+def _initial_params(param_override, flow):
+    if param_override is not None:
+        return param_override
     if flow.get("layout") == "layered_dag":
-        if params_path is not None:
-            return load_config(params_path)
         if flow["steps"]:
             return flow["steps"][0]["parameters"]
         return model_params_from_comsol_txt({})
-    if params_path is None:
-        raise ValueError("params_path is required for legacy flow configs")
-    return load_config(params_path)
+    raise ValueError("params_path is required for legacy flow configs")
 
 
 def _copy_layered_parameter_files(repo_root, step, output_dir):

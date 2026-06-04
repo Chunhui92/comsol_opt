@@ -46,7 +46,7 @@ public class ComsolStepWorker {
             manifest.put(node.id, result.manifest);
         }
 
-        writeWorkerOutputs(input, rves, wafer, waferSkipped, manifest);
+        writeWorkerOutputs(input, stateInText, rves, wafer, waferSkipped, manifest);
     }
 
     private static NodeResult runDagNode(StepInput input, NodeRun node, Map<String, RveResult> rves) throws Exception {
@@ -174,6 +174,7 @@ public class ComsolStepWorker {
 
     private static void writeWorkerOutputs(
         StepInput input,
+        String stateInText,
         Map<String, RveResult> rves,
         WaferResult wafer,
         boolean waferSkipped,
@@ -193,10 +194,12 @@ public class ComsolStepWorker {
         state.append("  \"step_id\": ").append(json(input.stepId)).append(",\n");
         state.append("  \"step_name\": ").append(json(input.stepName)).append(",\n");
         state.append("  \"rve\": ").append(rveMapToJson(rves)).append(",\n");
+        state.append("  \"device_rves\": ").append(deviceRvesToJson(rves)).append(",\n");
+        state.append("  \"wafer_inputs\": ").append(waferInputsToJson(rves, stateInText)).append(",\n");
         state.append("  \"wafer_result\": ").append(wafer.toJson()).append(",\n");
-        state.append("  \"materials_state\": {},\n");
-        state.append("  \"geometry_state\": {},\n");
-        state.append("  \"history\": []\n");
+        state.append("  \"materials_state\": ").append(objectJsonOrEmpty(stateInText, "materials_state")).append(",\n");
+        state.append("  \"geometry_state\": ").append(objectJsonOrEmpty(stateInText, "geometry_state")).append(",\n");
+        state.append("  \"history\": ").append(historyJson(stateInText, input, wafer, waferSkipped)).append("\n");
         state.append("}\n");
         Files.writeString(input.outputDir.resolve("state_out.json"), state.toString(), StandardCharsets.UTF_8);
     }
@@ -244,6 +247,76 @@ public class ComsolStepWorker {
         }
         json.append("}");
         return json.toString();
+    }
+
+    private static String deviceRvesToJson(Map<String, RveResult> rves) {
+        StringBuilder json = new StringBuilder("{");
+        int index = 0;
+        if (rves.containsKey("device_main")) {
+            json.append("\n    \"device_default\": ").append(rves.get("device_main").toJson());
+            index++;
+        }
+        if (rves.containsKey("device_aux")) {
+            if (index++ > 0) {
+                json.append(",");
+            }
+            json.append("\n    \"device2_for_mat3\": ").append(rves.get("device_aux").toJson());
+        }
+        if (index > 0) {
+            json.append("\n  ");
+        }
+        json.append("}");
+        return json.toString();
+    }
+
+    private static String waferInputsToJson(Map<String, RveResult> rves, String stateInText) {
+        String previous = objectText(stateInText, "wafer_inputs");
+        Map<String, String> directInputs = rawTopLevelObjects(previous);
+        StringBuilder json = new StringBuilder("{");
+        int index = 0;
+        for (Map.Entry<String, String> entry : directInputs.entrySet()) {
+            if (index++ > 0) {
+                json.append(",");
+            }
+            json.append("\n    ").append(json(entry.getKey())).append(": ").append(entry.getValue());
+        }
+        for (String key : new String[] {"mat1", "mat2", "mat3", "mat4", "die"}) {
+            RveResult rve = rves.get(key);
+            if (rve == null) {
+                continue;
+            }
+            if (index++ > 0) {
+                json.append(",");
+            }
+            json.append("\n    ").append(json(key)).append(": ").append(rve.toJson());
+        }
+        if (index > 0) {
+            json.append("\n  ");
+        }
+        json.append("}");
+        return json.toString();
+    }
+
+    private static String objectJsonOrEmpty(String text, String key) {
+        String object = objectText(text, key);
+        return object.isEmpty() ? "{}" : "{" + object + "}";
+    }
+
+    private static String historyJson(String stateInText, StepInput input, WaferResult wafer, boolean waferSkipped) {
+        String history = arrayText(stateInText, "history");
+        if (waferSkipped) {
+            return history.isEmpty() ? "[]" : "[" + history + "]";
+        }
+        String entry = "{"
+            + "\"step_id\":" + json(input.stepId)
+            + ",\"step_name\":" + json(input.stepName)
+            + ",\"bow_x_um\":" + wafer.bowX
+            + ",\"bow_y_um\":" + wafer.bowY
+            + "}";
+        if (history.trim().isEmpty()) {
+            return "[" + entry + "]";
+        }
+        return "[" + history + "," + entry + "]";
     }
 
     private static String sanitize(String value) {
@@ -607,6 +680,18 @@ public class ComsolStepWorker {
             }
             values.add(text.substring(matcher.start(), end + 1));
             matcher.region(end + 1, text.length());
+        }
+        return values;
+    }
+
+    private static Map<String, String> rawTopLevelObjects(String text) {
+        Map<String, String> values = new LinkedHashMap<>();
+        for (String object : splitTopLevelObjects(text)) {
+            String key = objectKey(object);
+            if (!key.isEmpty()) {
+                int start = object.indexOf("{");
+                values.put(key, object.substring(start));
+            }
         }
         return values;
     }

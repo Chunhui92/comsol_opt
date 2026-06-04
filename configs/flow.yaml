@@ -1,4 +1,4 @@
-flow_name: wafer_warpage_20step_flow_v1
+flow_name: wafer_warpage_layered_seed_flow_v1
 
 global:
   project_root: "."
