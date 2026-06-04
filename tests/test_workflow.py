@@ -335,6 +335,15 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("gev1", text)
         self.assertIn("gmevescp2", text)
         self.assertIn("run_wafer", text)
+        self.assertIn("parseNodes", text)
+        self.assertIn("parameter_txt_order", text)
+        self.assertIn("runDagNode", text)
+        self.assertIn("inheritRve", text)
+        self.assertIn("injectRveInputs", text)
+        self.assertIn("input_%s_sxx", text)
+        self.assertIn("resultFile", text)
+        self.assertIn("manifest.json", text)
+        self.assertIn("\"rve\"", text)
 
     def test_flow_responsibilities_are_split_into_focused_modules(self):
         import comsol_opt.flow_runner as flow_runner

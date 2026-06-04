@@ -21,8 +21,8 @@ COMSOL model geometry, studies, and evaluation tags are assumed to be stable. Th
 Current implementation status:
 
 - The Python orchestrator and mock backend follow the layered step DAG in `configs/steps/*.yaml`: each node reads its declared template/input references, stages parameter TXT files, runs or inherits, writes node result files, updates `state_out.json`, and finally runs wafer after die.
-- The Java COMSOL worker is still a legacy first-pass skeleton. It must be updated to parse the active `nodes` contract, honor `run` / `inherit`, load `parameter_txt_order`, write `manifest.json`, and write each node's configured `result_file`.
-- Real COMSOL RVE transfer is not implemented yet in Java. The worker still needs to read upstream `rve.*` results from `state_in.json`, inject those effective stress/stiffness/density values into downstream COMSOL models, then extract and persist the next RVE before advancing to die and wafer.
+- The Java COMSOL worker now has a first-pass DAG skeleton: it parses the active `nodes` contract, honors `run` / `inherit`, loads `parameter_txt_order`, writes `manifest.json`, writes each node's configured `result_file`, and carries `rve.*` state forward.
+- Real COMSOL RVE transfer uses provisional assumptions in Java. Upstream RVE values are injected into downstream COMSOL models as parameters named `input_<slot>_sxx`, `input_<slot>_syy`, `input_<slot>_rho`, `input_<slot>_d11`, and `input_<slot>_d22`. Replace these names once the real COMSOL templates expose their expected parameter/table inputs.
 
 ## Important Commands
 
@@ -115,7 +115,7 @@ Available backends:
 
 - `dryrun`: validates and writes `step_input.json` only.
 - `mock`: runs deterministic Python mock physics and writes `state_out.json`, `step_result.json`, `manifest.json`, and node result files.
-- `comsol`: reserved for invoking the Java COMSOL worker. The current Java file is not yet equivalent to the active DAG mock backend.
+- `comsol`: reserved for invoking the Java COMSOL worker. The current Java file follows the active DAG contract, but still needs real COMSOL template/tag validation.
 
 The Java COMSOL worker must output the same JSON shape as the mock backend.
 
@@ -125,7 +125,7 @@ Stage trials share cache entries through `runs/<run-id>/out/<step>_<group>/.cach
 
 ## Current Roadmap
 
-Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are Java DAG worker parity with the mock backend, real COMSOL RVE injection between node models, remaining real step configs, and start/stop checkpointed staged reruns.
+Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are real COMSOL template/tag validation, replacing provisional RVE injection names with real model inputs, remaining real step configs, and start/stop checkpointed staged reruns.
 
 ## Development Rules
 
