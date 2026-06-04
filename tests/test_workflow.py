@@ -205,7 +205,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             result = run_flow(
                 flow_path=flow_path,
                 params_path=None,
-                experiment_path=ROOT / "exp" / "bow_experiment.csv",
+                experiment_path=ROOT / "configs" / "experiments" / "bow_experiment.csv",
                 backend=make_backend("mock"),
                 run_id="skip_wafer",
                 runs_root=root / "runs",
@@ -231,7 +231,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
                 run_flow(
                     flow_path=flow_path,
                     params_path=None,
-                    experiment_path=ROOT / "exp" / "bow_experiment.csv",
+                    experiment_path=ROOT / "configs" / "experiments" / "bow_experiment.csv",
                     backend=make_backend("mock"),
                     run_id="bad_rule",
                     runs_root=root / "runs",
