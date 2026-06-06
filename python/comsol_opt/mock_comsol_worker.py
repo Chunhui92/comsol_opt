@@ -6,6 +6,7 @@ from .process import apply_process_update
 from .rve import make_rve, validate_rve
 from .schemas import StepInput, WaferState
 from .state import append_history, sync_legacy_state_aliases
+from .v2_contract import canonical_ref_name
 
 
 def run_mock_step(step_input_path):
@@ -16,6 +17,9 @@ def run_mock_step(step_input_path):
     state_out = deepcopy(state_in)
     state_out["step_id"] = step_input["step_id"]
     state_out["step_name"] = step_input["step_name"]
+
+    if _is_v2_step(step_input):
+        return run_mock_v2_step(step_input, state_out, state_in)
 
     apply_process_update(step_input, state_out)
 
@@ -133,6 +137,212 @@ def run_mock_dag_step(step_input, state_out):
     }
     dump_data(output_dir / "step_result.json", result)
     return result
+
+
+def run_mock_v2_step(step_input, state_out, state_in):
+    output_dir = Path(step_input["output_dir"])
+    manifest = {"step_id": step_input["step_id"], "nodes": {}}
+    previous_rves = deepcopy(state_in.get("rve", {}))
+    state_out.setdefault("rve", {})
+    wafer_result = state_out["wafer_result"]
+    log_lines = [
+        f"step_id={step_input['step_id']} step_name={step_input['step_name']}",
+        f"output_dir={output_dir}",
+        "node_order=" + ",".join(node["node"] for node in step_input["nodes"]),
+    ]
+
+    for node in step_input["nodes"]:
+        node_id = node["node"]
+        action = node["action"]
+        entry = {"action": action}
+        log_lines.append(
+            f"node={node_id} action={action} template={node.get('template', '')} model_path={node.get('model_path', node.get('template_path', ''))}"
+        )
+        if action == "inherit":
+            inherited = state_out["rve"].get(node_id)
+            if not inherited or not inherited.get("valid"):
+                raise RuntimeError(f"{step_input['step_id']} cannot inherit invalid RVE {node_id}")
+            entry.update({"status": "success", "source_step": inherited.get("source_step"), "output": node["output"]})
+            log_lines.append(_v2_rve_log_line("inherit", node_id, inherited))
+            manifest["nodes"][node_id] = entry
+            continue
+        if action in {"default_from", "alias"}:
+            source = node["source"]
+            source_rve = deepcopy(state_out["rve"][source])
+            source_rve["status"] = action
+            source_rve["source_node"] = source
+            state_out["rve"][node_id] = source_rve
+            entry.update({"status": "success", "source_step": source_rve.get("source_step"), "source_node": source})
+            log_lines.append(f"{action} node={node_id} source={source} source_step={source_rve.get('source_step')}")
+            log_lines.append(_v2_rve_log_line(action, node_id, source_rve))
+            manifest["nodes"][node_id] = entry
+            continue
+        if action != "run":
+            raise ValueError(f"{step_input['step_id']} node {node_id} has unknown action {action}")
+
+        if node_id == "wafer":
+            log_lines.extend(_v2_input_log_lines(node, state_out))
+            wafer_result = mock_v2_wafer_result(state_out, node)
+            state_out["wafer_result"] = wafer_result
+            append_history(state_out, step_input["step_id"], step_input["step_name"], wafer_result)
+            _write_node_result(output_dir, node, wafer_result)
+            log_lines.append(
+                f"wafer bow_x_um={wafer_result['bow_x_um']} bow_y_um={wafer_result['bow_y_um']} kx={wafer_result['kx']} ky={wafer_result['ky']}"
+            )
+            entry.update({"status": "success", "template": node.get("template"), "output": node["output"]})
+            manifest["nodes"][node_id] = entry
+            continue
+
+        log_lines.extend(_v2_input_log_lines(node, state_out))
+        inputs = _resolve_v2_inputs(state_out, node)
+        rve = mock_v2_rve(node, inputs, step_input)
+        if node.get("studies", {}).get("cp") is None and node.get("merge", {}).get("D") == "inherit_previous":
+            rve["D"] = deepcopy(previous_rves[node_id]["D"])
+            rve["D_source_step"] = previous_rves[node_id].get("source_step")
+            rve["status"] = "run_stress_only"
+        else:
+            rve["status"] = "run"
+        rve["source_node"] = node_id
+        validate_rve(rve, node_id)
+        state_out["rve"][node_id] = rve
+        _write_node_result(output_dir, node, rve)
+        log_lines.append(_v2_rve_log_line("run", node_id, rve))
+        entry.update(
+            {
+                "status": "success",
+                "template": node.get("template"),
+                "source_step": step_input["step_id"],
+                "output": node["output"],
+                "inputs": {
+                    slot: {"source_step": item.get("source_step"), "source_node": item.get("source_node")}
+                    for slot, item in inputs.items()
+                },
+            }
+        )
+        manifest["nodes"][node_id] = entry
+
+    dump_data(output_dir / "manifest.json", manifest)
+    dump_data(output_dir / "state_out.json", state_out)
+    _write_step_log(output_dir, log_lines)
+    result = {"status": "success", "step_id": step_input["step_id"], "wafer_result": wafer_result, "wafer_skipped": False}
+    dump_data(output_dir / "step_result.json", result)
+    return result
+
+
+def _is_v2_step(step_input):
+    return any("node" in node for node in step_input.get("nodes", []))
+
+
+def _resolve_v2_inputs(state, node):
+    inputs = {}
+    for slot, input_cfg in node.get("inputs", {}).items():
+        source = canonical_ref_name(input_cfg["source"])
+        rve = state["rve"][source]
+        if not rve.get("valid"):
+            raise RuntimeError(f"requires valid input {input_cfg['source']}")
+        inputs[slot] = rve
+    return inputs
+
+
+def mock_v2_rve(node, inputs, step_input):
+    if inputs:
+        sigx = sum(item["stress_eff"]["sxx"] for item in inputs.values()) / len(inputs)
+        sigy = sum(item["stress_eff"]["syy"] for item in inputs.values()) / len(inputs)
+        d11 = sum(item["D"][0][0] for item in inputs.values()) / len(inputs)
+        d22 = sum(item["D"][1][1] for item in inputs.values()) / len(inputs)
+    else:
+        factor = {
+            "pillar": 1.0,
+            "sc": 0.8,
+            "decap1": 0.9,
+            "decap2": 1.0,
+            "decap3": 1.1,
+            "fecap": 0.7,
+            "die": 1.0,
+        }.get(node["node"], 1.0)
+        sigx = factor * (10.0 + len(step_input["step_id"])) * 1e6
+        sigy = factor * (8.0 + len(step_input["step_id"])) * 1e6
+        d11 = factor * 100e9
+        d22 = factor * 90e9
+    return make_rve(
+        source_step=step_input["step_id"],
+        source_model=node.get("template", node["node"]),
+        sigx=sigx,
+        sigy=sigy,
+        d11=d11,
+        d22=d22,
+        rho=3000.0,
+    )
+
+
+def mock_v2_wafer_result(state, node):
+    if "die" not in node.get("inputs", {}) or "onon" not in node.get("inputs", {}):
+        return {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0}
+    die = state["rve"][canonical_ref_name(node["inputs"]["die"]["source"])]
+    onon = state["rve"][canonical_ref_name(node["inputs"]["onon"]["source"])]
+    bow_x = 0.7 * die["stress_eff"]["sxx"] / 1e6 + 0.3 * onon["stress_eff"]["sxx"] / 1e6
+    bow_y = 0.7 * die["stress_eff"]["syy"] / 1e6 + 0.3 * onon["stress_eff"]["syy"] / 1e6
+    return {"bow_x_um": 0.8 * bow_x, "bow_y_um": 0.75 * bow_y, "kx": bow_x * 1e-5, "ky": bow_y * 1e-5}
+
+
+def _v2_input_log_lines(node, state):
+    lines = []
+    for slot, input_cfg in node.get("inputs", {}).items():
+        source = canonical_ref_name(input_cfg["source"])
+        rve = state["rve"][source]
+        lines.append(
+            f"input slot={slot} source={input_cfg['source']} source_step={rve.get('source_step')} source_node={rve.get('source_node', source)}"
+        )
+        target = input_cfg.get("target", {})
+        material = target.get("material", {})
+        if material:
+            lines.append(
+                "material "
+                f"component={material.get('component', '')} "
+                f"tag={material.get('tag', '')} "
+                f"density_group={material.get('density_group', '')} "
+                f"density_property={material.get('density_property', '')} "
+                f"elastic_group={material.get('elastic_group', '')} "
+                f"elastic_property={material.get('elastic_property', '')} "
+                f"D_format={material.get('D_format', '')} "
+                f"elasticity_order={material.get('elasticity_order', '')}"
+            )
+        stress = target.get("stress", {})
+        if stress:
+            lines.append(
+                "stress "
+                f"type={stress.get('type', 'initial_stress')} "
+                f"component={stress.get('component', '')} "
+                f"physics={stress.get('physics', '')} "
+                f"parent_feature={stress.get('parent_feature', '')} "
+                f"feature={stress.get('feature', '')} "
+                f"property={stress.get('property', '')} "
+                f"stress_format={stress.get('stress_format', '')}"
+            )
+    return lines
+
+
+def _v2_rve_log_line(event, node_id, rve):
+    return (
+        f"rve event={event} node={node_id} status={rve.get('status', '')} "
+        f"source_step={rve.get('source_step', '')} source_node={rve.get('source_node', '')} "
+        f"rho={rve.get('rho', '')} sxx={rve.get('stress_eff', {}).get('sxx', '')} "
+        f"syy={rve.get('stress_eff', {}).get('syy', '')} "
+        f"D11={_matrix_value(rve.get('D'), 0, 0)} D22={_matrix_value(rve.get('D'), 1, 1)} "
+        f"D_source_step={rve.get('D_source_step', '')}"
+    )
+
+
+def _matrix_value(matrix, row, col):
+    if not matrix:
+        return ""
+    return matrix[row][col]
+
+
+def _write_step_log(output_dir, lines):
+    log_dir = Path(output_dir) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "step.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_node_result(output_dir, node, result):

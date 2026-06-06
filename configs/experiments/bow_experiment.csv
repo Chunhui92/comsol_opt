@@ -2,4 +2,4 @@ step_id,step_name,bow_x_um,bow_y_um,temperature_C,weight_x,weight_y
 S00,init,100,80,25,1.0,1.0
 S01,ONONdep,75,65,25,1.0,1.0
 S02,trench_etch,88,72,25,1.0,1.0
-S19,final,50,40,25,1.0,1.0
+S20,final,50,40,25,1.0,1.0

@@ -6,8 +6,10 @@ def compute_loss_from_rows(rows, scale_x=30.0, scale_y=30.0, lambda_aniso=0.0, s
     total = 0.0
     count = 0
     for row in rows:
-        sim_x = float(row["bow_x_sim_um"])
-        sim_y = float(row["bow_y_sim_um"])
+        if not row.get("bow_x_exp_um") or not row.get("bow_y_exp_um"):
+            continue
+        sim_x = float(row.get("bow_x_sim_um", row.get("bow_x_um")))
+        sim_y = float(row.get("bow_y_sim_um", row.get("bow_y_um")))
         exp_x = float(row["bow_x_exp_um"])
         exp_y = float(row["bow_y_exp_um"])
         wx = float(row.get("weight_x", 1.0) or 1.0)
@@ -23,4 +25,3 @@ def compute_loss_from_rows(rows, scale_x=30.0, scale_y=30.0, lambda_aniso=0.0, s
 def load_summary_rows(path):
     with Path(path).open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
-

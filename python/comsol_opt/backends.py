@@ -28,9 +28,23 @@ class ComsolBackend(SimulationBackend):
         if not self.command:
             raise RuntimeError("COMSOL backend requires a command")
         cmd = [*self.command, str(step_input_path)]
-        subprocess.run(cmd, check=True)
         step_input = load_json(step_input_path)
-        return load_json(Path(step_input["output_dir"]) / "step_result.json")
+        output_dir = Path(step_input["output_dir"])
+        _append_step_log(
+            output_dir,
+            [
+                f"backend=comsol step_id={step_input.get('step_id')} step_name={step_input.get('step_name')}",
+                "command=" + " ".join(cmd),
+            ],
+        )
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            _append_step_log(output_dir, [f"worker_status=failed returncode={exc.returncode}"])
+            raise
+        result = load_json(output_dir / "step_result.json")
+        _append_step_log(output_dir, [f"worker_status={result.get('status', 'unknown')}"])
+        return result
 
 
 def make_backend(name, comsol_command=None):
@@ -43,3 +57,10 @@ def make_backend(name, comsol_command=None):
         return ComsolBackend(command)
     raise ValueError(f"Unknown backend: {name}")
 
+
+def _append_step_log(output_dir, lines):
+    log_dir = Path(output_dir) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (log_dir / "step.log").open("a", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line + "\n")

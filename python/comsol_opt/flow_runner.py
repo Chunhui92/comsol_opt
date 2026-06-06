@@ -5,7 +5,7 @@ from .config_io import dump_data, load_config
 from .parameter_txt import ParameterTxtSet
 from .parameter_txt import parse_parameter_txt_files
 from .params import flatten_params, model_params_from_comsol_txt
-from .state import initial_state
+from .state import initial_state, initial_state_v2
 from .step_input import build_step_input, validate_flow
 from .summary import load_experiment, write_summary
 
@@ -17,6 +17,8 @@ def load_flow_definition(flow_path, repo_root):
     flow_path = Path(flow_path)
     repo_root = Path(repo_root)
     flow = load_config(flow_path)
+    if flow.get("version") == 2:
+        return _load_v2_flow_definition(flow, repo_root)
     if "global" not in flow:
         return flow
 
@@ -56,6 +58,61 @@ def load_flow_definition(flow_path, repo_root):
     flow["layout"] = "layered_dag"
     flow["steps"] = expanded_steps
     return flow
+
+
+def _load_v2_flow_definition(flow, repo_root):
+    templates_ref = flow.get("templates", {})
+    templates = load_config(repo_root / templates_ref) if isinstance(templates_ref, str) else templates_ref
+    parameter_files = list(flow.get("parameter_txt_order", []))
+    txt_paths = [repo_root / item for item in parameter_files]
+    raw_parameters = parse_parameter_txt_files(txt_paths)
+    parameters = model_params_from_comsol_txt(raw_parameters)
+    expanded_steps = []
+    for step_ref in flow.get("steps", []):
+        if isinstance(step_ref, str):
+            step_cfg = load_config(repo_root / step_ref)
+            config_path = step_ref
+            enabled = True
+        else:
+            config_path = step_ref.get("config")
+            step_cfg = load_config(repo_root / config_path) if config_path else dict(step_ref)
+            enabled = step_ref.get("enabled", True)
+        if not enabled:
+            continue
+        step = _normalize_v2_step(step_cfg)
+        step.update(
+            {
+                "layout_version": 2,
+                "config": config_path,
+                "templates": templates,
+                "parameter_files": parameter_files,
+                "parameter_txt_order": [Path(item).stem for item in parameter_files],
+                "raw_parameters": raw_parameters,
+                "parameters": parameters,
+                "run_wafer": True,
+            }
+        )
+        expanded_steps.append(step)
+    flow = dict(flow)
+    flow["layout"] = "v2"
+    flow["templates"] = templates
+    flow["steps"] = expanded_steps
+    return flow
+
+
+def _normalize_v2_step(step_cfg):
+    if "step" in step_cfg:
+        step = {**step_cfg["step"], **{key: value for key, value in step_cfg.items() if key != "step"}}
+    else:
+        step = dict(step_cfg)
+    if "id" not in step and "step_id" in step:
+        step["id"] = step.pop("step_id")
+    if "name" not in step and "step_name" in step:
+        step["name"] = step.pop("step_name")
+    step.setdefault("process_type", "v2")
+    step.setdefault("update_rule", "init")
+    step.setdefault("experiment_step", step["id"])
+    return step
 
 
 def _resolve_node(node, templates, extractors):
@@ -124,11 +181,14 @@ def run_flow(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     initial_path = run_dir / "_initial_state.json"
-    dump_data(initial_path, initial_state(params))
+    if flow.get("layout") == "v2":
+        dump_data(initial_path, initial_state_v2(params))
+    else:
+        dump_data(initial_path, initial_state(params))
     state_in_path = initial_path
 
     txt_set = None
-    if flow.get("layout") != "layered_dag":
+    if flow.get("layout") not in {"layered_dag", "v2"}:
         txt_set = prepare_parameter_txt_set(repo_root, parameter_map_path)
     cache = StepCache(cache_root or run_dir / ".cache") if use_cache else None
     completed = 0
@@ -168,6 +228,10 @@ def _initial_params(param_override, flow):
     if param_override is not None:
         return param_override
     if flow.get("layout") == "layered_dag":
+        if flow["steps"]:
+            return flow["steps"][0]["parameters"]
+        return model_params_from_comsol_txt({})
+    if flow.get("layout") == "v2":
         if flow["steps"]:
             return flow["steps"][0]["parameters"]
         return model_params_from_comsol_txt({})

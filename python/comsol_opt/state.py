@@ -64,6 +64,32 @@ def initial_state(params):
     return state
 
 
+def initial_state_v2(params):
+    rve = {
+        "pillar": empty_rve("pillar"),
+        "sc": empty_rve("sc"),
+        "decap1": empty_rve("decap1"),
+        "decap2": empty_rve("decap2"),
+        "decap3": empty_rve("decap3"),
+        "fecap": empty_rve("fecap"),
+        "die": empty_rve("die"),
+        "onon": empty_rve("onon"),
+    }
+    return {
+        "step_id": "INIT",
+        "step_name": "initial",
+        "wafer_result": {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0},
+        "rve": rve,
+        "materials_state": {
+            "FEOL": dict(params.get("FEOL", {})),
+            "ONON": dict(params.get("ONON", {})),
+            "release": dict(params.get("release", {})),
+        },
+        "geometry_state": dict(params.get("geometry", {})),
+        "history": [],
+    }
+
+
 def sync_legacy_state_aliases(state):
     rve = state.setdefault("rve", {})
     state.setdefault("device_rves", {})

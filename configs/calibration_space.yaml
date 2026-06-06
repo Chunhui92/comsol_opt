@@ -154,8 +154,8 @@ groups:
     scale: 1500000000.0
     unit: Pa
 - name: G10_final
-  start_step: S10
-  target_step: S10
+  start_step: S20
+  target_step: S20
   params:
   - key: release.final_ONON
     low: 0.8

@@ -82,7 +82,7 @@ public class ComsolStepWorker {
     private static RveResult runRveModel(NodeRun node, List<Path> parameterFiles, Map<String, RveResult> rves) throws Exception {
         Model model = ModelUtil.load("model_" + sanitize(node.id), node.templatePath);
         loadParameterFiles(model, parameterFiles);
-        injectRveInputs(model, node.inputs, rves);
+        injectRveInputs(model, node, rves);
         model.study(node.extractorTags.getOrDefault("study", DEFAULT_STUDY_TAG)).run();
 
         double rho = firstReal(model, node.extractorTags.getOrDefault("rho", DEFAULT_RHO_GEV_TAG), 0.0);
@@ -97,7 +97,7 @@ public class ComsolStepWorker {
     private static WaferResult runWaferModel(NodeRun node, List<Path> parameterFiles, Map<String, RveResult> rves) throws Exception {
         Model model = ModelUtil.load("model_wafer", node.templatePath);
         loadParameterFiles(model, parameterFiles);
-        injectRveInputs(model, node.inputs, rves);
+        injectRveInputs(model, node, rves);
         model.study(node.extractorTags.getOrDefault("study", DEFAULT_STUDY_TAG)).run();
 
         double bowX = firstReal(model, node.extractorTags.getOrDefault("bow_x", DEFAULT_BOW_GEV_TAG), 0.0);
@@ -114,8 +114,15 @@ public class ComsolStepWorker {
         }
     }
 
-    private static void injectRveInputs(Model model, Map<String, String> inputs, Map<String, RveResult> rves) {
-        for (Map.Entry<String, String> input : inputs.entrySet()) {
+    private static void injectRveInputs(Model model, NodeRun node, Map<String, RveResult> rves) {
+        for (InputTransfer transfer : node.inputTransfers) {
+            if (!transfer.hasTargets()) {
+                continue;
+            }
+            applyMaterialTarget(model, transfer.material, transfer);
+            applyStressTarget(model, transfer.stress, transfer);
+        }
+        for (Map.Entry<String, String> input : node.inputs.entrySet()) {
             if (!input.getValue().startsWith("rve.")) {
                 continue;
             }
@@ -125,12 +132,94 @@ public class ComsolStepWorker {
                 throw new IllegalStateException("Missing valid upstream RVE " + input.getValue());
             }
             String slot = sanitize(input.getKey());
-            model.param().set(String.format("input_%s_sxx", slot), Double.toString(rve.sxx));
-            model.param().set(String.format("input_%s_syy", slot), Double.toString(rve.syy));
-            model.param().set(String.format("input_%s_rho", slot), Double.toString(rve.rho));
-            model.param().set(String.format("input_%s_d11", slot), Double.toString(rve.d[0][0]));
-            model.param().set(String.format("input_%s_d22", slot), Double.toString(rve.d[1][1]));
+            String componentTag = slot + "_component";
+            String materialTag = slot + "_material";
+            String elasticGroupTag = slot + "_elastic";
+            String elasticPropertyName = "D";
+            String parentFeatureTag = slot + "_lemm";
+            String stressFeatureTag = slot + "_initial_stress";
+            String D_upper21 = "D_upper21";
+            String dFormat = "symmetric_upper21";
+            if (!"symmetric_upper21".equals(dFormat) || D_upper21.isEmpty()) {
+                throw new IllegalStateException("Unsupported D transfer format for " + slot);
+            }
+            applyMaterialTarget(model, componentTag, materialTag, elasticGroupTag, elasticPropertyName, rve);
+            applyStressTarget(model, componentTag, nodePhysicsTag(slot), parentFeatureTag, stressFeatureTag, rve);
         }
+    }
+
+    private static void applyMaterialTarget(Model model, MaterialTarget target, InputTransfer transfer) {
+        model.component(target.componentTag)
+            .material(target.materialTag)
+            .propertyGroup(target.densityGroupTag)
+            .set(target.densityPropertyName, new String[] { transfer.rhoExpression });
+        model.component(target.componentTag)
+            .material(target.materialTag)
+            .propertyGroup(target.elasticGroupTag)
+            .set(target.elasticPropertyName, transfer.dUpper21Expressions);
+    }
+
+    private static void applyStressTarget(Model model, StressTarget target, InputTransfer transfer) {
+        model.component(target.componentTag)
+            .physics(target.physicsTag)
+            .feature(target.parentFeatureTag)
+            .feature(target.featureTag)
+            .set(target.propertyName, new String[] {
+                transfer.sxxExpression, "0[Pa]", "0[Pa]",
+                "0[Pa]", transfer.syyExpression, "0[Pa]",
+                "0[Pa]", "0[Pa]", "0[Pa]"
+            });
+    }
+
+    private static void applyMaterialTarget(
+        Model model,
+        String componentTag,
+        String materialTag,
+        String elasticGroupTag,
+        String elasticPropertyName,
+        RveResult rve
+    ) {
+        model.component(componentTag)
+            .material(materialTag)
+            .propertyGroup("def")
+            .set("density", new String[] { rve.rho + "[kg/m^3]" });
+        model.component(componentTag)
+            .material(materialTag)
+            .propertyGroup(elasticGroupTag)
+            .set(elasticPropertyName, symmetricUpper21Expressions(rve));
+    }
+
+    private static void applyStressTarget(
+        Model model,
+        String componentTag,
+        String physicsTag,
+        String parentFeatureTag,
+        String stressFeatureTag,
+        RveResult rve
+    ) {
+        model.component(componentTag)
+            .physics(physicsTag)
+            .feature(parentFeatureTag)
+            .feature(stressFeatureTag)
+            .set("S0", new String[] {
+                rve.sxx + "[Pa]", "0[Pa]", "0[Pa]",
+                "0[Pa]", rve.syy + "[Pa]", "0[Pa]",
+                "0[Pa]", "0[Pa]", "0[Pa]"
+            });
+    }
+
+    private static String nodePhysicsTag(String slot) {
+        return slot + "_physics";
+    }
+
+    private static String[] symmetricUpper21Expressions(RveResult rve) {
+        List<String> values = new ArrayList<>();
+        for (int row = 0; row < 6; row++) {
+            for (int col = row; col < 6; col++) {
+                values.add(rve.d[row][col] + "[Pa]");
+            }
+        }
+        return values.toArray(new String[0]);
     }
 
     private static double firstReal(Model model, String numericalTag, double fallback) {
@@ -377,6 +466,7 @@ public class ComsolStepWorker {
         final String output;
         final String resultFile;
         final Map<String, String> inputs;
+        final List<InputTransfer> inputTransfers;
         final Map<String, String> extractorTags;
 
         private NodeRun(
@@ -388,6 +478,7 @@ public class ComsolStepWorker {
             String output,
             String resultFile,
             Map<String, String> inputs,
+            List<InputTransfer> inputTransfers,
             Map<String, String> extractorTags
         ) {
             this.id = id;
@@ -398,6 +489,7 @@ public class ComsolStepWorker {
             this.output = output;
             this.resultFile = resultFile;
             this.inputs = inputs;
+            this.inputTransfers = inputTransfers;
             this.extractorTags = extractorTags;
         }
     }
@@ -416,11 +508,150 @@ public class ComsolStepWorker {
                     optionalStringValue(nodeText, "output"),
                     optionalStringValue(nodeText, "result_file"),
                     objectStrings(objectText(nodeText, "inputs")),
+                    parseInputTransfers(nodeText),
                     objectStrings(objectText(nodeText, "extractor_tags"))
                 )
             );
         }
         return nodes;
+    }
+
+    private static List<InputTransfer> parseInputTransfers(String nodeText) {
+        List<InputTransfer> transfers = new ArrayList<>();
+        String inputsText = objectText(nodeText, "inputs");
+        for (String slotObject : splitTopLevelObjects(inputsText)) {
+            String slot = objectKey(slotObject);
+            String rveText = objectText(slotObject, "rve");
+            String targetText = objectText(slotObject, "target");
+            if (slot.isEmpty() || rveText.isEmpty() || targetText.isEmpty()) {
+                continue;
+            }
+            String dFormat = optionalStringValue(rveText, "D_format");
+            String D_upper21 = "D_upper21";
+            if (!"symmetric_upper21".equals(dFormat)) {
+                throw new IllegalArgumentException("Input " + slot + " must use symmetric_upper21");
+            }
+            MaterialTarget material = MaterialTarget.fromJson(objectText(targetText, "material"));
+            StressTarget stress = StressTarget.fromJson(objectText(targetText, "stress"));
+            String stressText = objectText(rveText, "stress_eff");
+            transfers.add(
+                new InputTransfer(
+                    slot,
+                    stringValue(slotObject, "source"),
+                    stringValue(rveText, "rho"),
+                    stringValue(stressText, "sxx"),
+                    stringValue(stressText, "syy"),
+                    stringArray(rveText, D_upper21).toArray(new String[0]),
+                    material,
+                    stress
+                )
+            );
+        }
+        return transfers;
+    }
+
+    private static final class InputTransfer {
+        final String slot;
+        final String sourceRef;
+        final String rhoExpression;
+        final String sxxExpression;
+        final String syyExpression;
+        final String[] dUpper21Expressions;
+        final MaterialTarget material;
+        final StressTarget stress;
+
+        private InputTransfer(
+            String slot,
+            String sourceRef,
+            String rhoExpression,
+            String sxxExpression,
+            String syyExpression,
+            String[] dUpper21Expressions,
+            MaterialTarget material,
+            StressTarget stress
+        ) {
+            this.slot = slot;
+            this.sourceRef = sourceRef;
+            this.rhoExpression = rhoExpression;
+            this.sxxExpression = sxxExpression;
+            this.syyExpression = syyExpression;
+            this.dUpper21Expressions = dUpper21Expressions;
+            this.material = material;
+            this.stress = stress;
+        }
+
+        boolean hasTargets() {
+            return material != null && stress != null;
+        }
+    }
+
+    private static final class MaterialTarget {
+        final String componentTag;
+        final String materialTag;
+        final String densityGroupTag;
+        final String densityPropertyName;
+        final String elasticGroupTag;
+        final String elasticPropertyName;
+
+        private MaterialTarget(
+            String componentTag,
+            String materialTag,
+            String densityGroupTag,
+            String densityPropertyName,
+            String elasticGroupTag,
+            String elasticPropertyName
+        ) {
+            this.componentTag = componentTag;
+            this.materialTag = materialTag;
+            this.densityGroupTag = densityGroupTag;
+            this.densityPropertyName = densityPropertyName;
+            this.elasticGroupTag = elasticGroupTag;
+            this.elasticPropertyName = elasticPropertyName;
+        }
+
+        static MaterialTarget fromJson(String text) {
+            if (text.isEmpty()) {
+                return null;
+            }
+            return new MaterialTarget(
+                stringValue(text, "component"),
+                stringValue(text, "tag"),
+                optionalStringValue(text, "density_group").isEmpty() ? "def" : optionalStringValue(text, "density_group"),
+                optionalStringValue(text, "density_property").isEmpty() ? "density" : optionalStringValue(text, "density_property"),
+                stringValue(text, "elastic_group"),
+                stringValue(text, "elastic_property")
+            );
+        }
+    }
+
+    private static final class StressTarget {
+        final String componentTag;
+        final String physicsTag;
+        final String parentFeatureTag;
+        final String featureTag;
+        final String propertyName;
+
+        private StressTarget(String componentTag, String physicsTag, String parentFeatureTag, String featureTag, String propertyName) {
+            this.componentTag = componentTag;
+            this.physicsTag = physicsTag;
+            this.parentFeatureTag = parentFeatureTag;
+            this.featureTag = featureTag;
+            this.propertyName = propertyName;
+        }
+
+        static StressTarget fromJson(String text) {
+            if (text.isEmpty()) {
+                return null;
+            }
+            // target.stress
+            return new StressTarget(
+                stringValue(text, "component"),
+                stringValue(text, "physics"),
+                optionalStringValue(text, "parent_feature"),
+                stringValue(text, "feature"),
+                stringValue(text, "property")
+            );
+        }
     }
 
     private static List<Path> parameterFilesInOrder(String text) {

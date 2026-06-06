@@ -1,0 +1,11 @@
+step_id: S08
+step_name: ald_sac_tin_depo
+nodes:
+  pillar: {action: run, template: pillar_generic}
+  sc: {action: inherit}
+  decap1: {action: run, template: decap_model, inputs: {pillar: {ref: rve.pillar}}}
+  decap2: {action: run, template: decap_model, inputs: {pillar: {ref: rve.pillar}}}
+  decap3: {action: run, template: decap_model, inputs: {pillar: {ref: rve.pillar}}}
+  fecap: {action: run, template: fecap_model, inputs: {pillar: {ref: rve.pillar}, sc: {ref: rve.sc}}}
+  die: {action: run, template: die_model, inputs: {decap1: {ref: rve.decap1}, decap2: {ref: rve.decap2}, decap3: {ref: rve.decap3}, fecap: {ref: rve.fecap}}}
+  wafer: {action: run, template: wafer_warp_model, inputs: {die: {ref: rve.die}, onon: {ref: rve.onon}}}

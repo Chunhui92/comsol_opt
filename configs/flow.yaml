@@ -1,28 +1,41 @@
-flow_name: wafer_warpage_layered_seed_flow_v1
+version: 2
+run_id_default: dev_20step
 
-global:
-  project_root: "."
-  backend: mock
-  run_root: runs
-  experiment_file: configs/experiments/bow_experiment.csv
-  templates_file: configs/templates.yaml
-  extractors_file: configs/extractors.yaml
-  global_params_file: configs/params/global_params.txt
-  calibration_override_file: configs/params/calibration_override.txt
+parameter_txt_order:
+  - configs/params/global_params.txt
+  - configs/params/calibration_override.txt
 
-execution:
-  rerun_from_step: null
-  enable_cache: true
-  save_solved_mph: false
-  stop_on_error: true
+templates: configs/templates.yaml
 
 steps:
-  - id: S00
-    name: init
-    config: configs/steps/S00_init.yaml
-    enabled: true
+  - configs/steps/S01_w_plug_cmp.yaml
+  - configs/steps/S02_onon_dep.yaml
+  - configs/steps/S03_dti_etch.yaml
+  - configs/steps/S04_sc_etch.yaml
+  - configs/steps/S05_sc_asi_etch.yaml
+  - configs/steps/S06_pillar_etch.yaml
+  - configs/steps/S07_sac_ox_dep.yaml
+  - configs/steps/S08_ald_sac_tin_depo.yaml
+  - configs/steps/S09_nbo_depo.yaml
+  - configs/steps/S10_ald_tin_depo.yaml
+  - configs/steps/S11_pillar_w_cmp.yaml
+  - configs/steps/S12_dpl_etch.yaml
+  - configs/steps/S13_dpl_cmp.yaml
+  - configs/steps/S14_lpad_w_cmp.yaml
+  - configs/steps/S15_feslit_asi_dep.yaml
+  - configs/steps/S16_feslit_etch.yaml
+  - configs/steps/S17_sin_rmv.yaml
+  - configs/steps/S18_sac_ox_remove.yaml
+  - configs/steps/S19_w_recess.yaml
+  - configs/steps/S20_feslit_buff_cmp.yaml
 
-  - id: S02
-    name: trench_etch
-    config: configs/steps/S02_trench_etch.yaml
-    enabled: true
+onon:
+  source_step: S02
+  source_node: pillar
+
+runtime:
+  cleanup_mph: true
+  keep_json: true
+  keep_logs: true
+  keep_exports: true
+  fail_fast_on_required_input_missing: true

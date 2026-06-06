@@ -1,48 +1,254 @@
 templates:
-  device:
-    dev01:
-      path: "models/templates/device/dev01.mph"
-      description: "device template 01"
-    dev02:
-      path: "models/templates/device/dev02.mph"
-      description: "device template 02"
-    dev03:
-      path: "models/templates/device/dev03.mph"
-      description: "ONON device RVE template"
-    dev04:
-      path: "models/templates/device/dev04.mph"
-      description: "trench etch device template"
-    dev05:
-      path: "models/templates/device/dev05.mph"
-    dev06:
-      path: "models/templates/device/dev06.mph"
-    dev07:
-      path: "models/templates/device/dev07.mph"
-    dev08:
-      path: "models/templates/device/dev08.mph"
-    dev09:
-      path: "models/templates/device/dev09.mph"
-    dev10:
-      path: "models/templates/device/dev10.mph"
+  p01_wafer_init:
+    path: models/process_models/p01_wafer_init.mph
+    node_type: wafer
+    studies:
+      stress: std_warpage
+      cp: null
+    extractors:
+      bow_x_um: gev_bow_x
+      bow_y_um: gev_bow_y
+    outputs:
+      result_file: wafer_result.json
 
-  mat:
-    mat_tpl01:
-      path: "models/templates/mat/mat_tpl01.mph"
-    mat_tpl02:
-      path: "models/templates/mat/mat_tpl02.mph"
-    mat_tpl03:
-      path: "models/templates/mat/mat_tpl03.mph"
-    mat_tpl04:
-      path: "models/templates/mat/mat_tpl04.mph"
-    mat_tpl05:
-      path: "models/templates/mat/mat_tpl05.mph"
-    mat_tpl06:
-      path: "models/templates/mat/mat_tpl06.mph"
+  pillar_generic:
+    path: models/process_models/pillar_models/pillar_generic.mph
+    node_type: pillar
+    studies:
+      stress: std_pillar
+      cp: cp_pillar
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: gev_D
+    outputs:
+      result_file: pillar_rve.json
 
-  die:
-    base:
-      path: "models/templates/die/die_base.mph"
+  sc_model:
+    path: models/process_models/sc_models/sc_model.mph
+    node_type: sc
+    studies:
+      stress: std_sc
+      cp: cp_sc
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: gev_D
+    outputs:
+      result_file: sc_rve.json
 
-  wafer:
-    base:
-      path: "models/templates/wafer/wafer_base.mph"
+  decap_model:
+    path: models/process_models/cap_models/decap_model_all.mph
+    node_type: decap
+    studies:
+      stress: std_decap
+      cp: cp_decap
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: gev_D
+    outputs:
+      result_file: decap_rve.json
+    input_targets:
+      pillar: &pillar_target
+        material:
+          component: comp_decap
+          tag: mat_pillar_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_decap
+          physics: solid_decap
+          parent_feature: lemm1
+          feature: initstress_pillar
+          property: S0
+          stress_format: diag_sxx_syy
+
+  fecap_model:
+    path: models/process_models/cap_models/fecap_model_all.mph
+    node_type: fecap
+    studies:
+      stress: std_fecap
+      cp: cp_fecap
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: gev_D
+    outputs:
+      result_file: fecap_rve.json
+    input_targets:
+      pillar: *pillar_target
+      sc: &sc_target
+        material:
+          component: comp_fecap
+          tag: mat_sc_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_fecap
+          physics: solid_fecap
+          parent_feature: lemm1
+          feature: initstress_sc
+          property: S0
+          stress_format: diag_sxx_syy
+
+  fecap_stress_only:
+    path: models/process_models/cap_models/fecap_feslit_etch.mph
+    node_type: fecap
+    studies:
+      stress: std_fecap
+      cp: null
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: null
+    outputs:
+      result_file: fecap_rve.json
+    input_targets:
+      pillar: *pillar_target
+      sc: *sc_target
+
+  die_model:
+    path: models/process_models/die_model.mph
+    node_type: die
+    studies:
+      stress: std_die
+      cp: cp_die
+    extractors:
+      rho: gev_rho
+      stress: gev_stress
+      D: gev_D
+    outputs:
+      result_file: die_rve.json
+    input_targets:
+      decap1: &decap1_target
+        material:
+          component: comp_die
+          tag: mat_decap1_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_die
+          physics: solid_die
+          parent_feature: lemm1
+          feature: initstress_decap1
+          property: S0
+          stress_format: diag_sxx_syy
+      decap2:
+        material:
+          component: comp_die
+          tag: mat_decap2_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_die
+          physics: solid_die
+          parent_feature: lemm1
+          feature: initstress_decap2
+          property: S0
+          stress_format: diag_sxx_syy
+      decap3:
+        material:
+          component: comp_die
+          tag: mat_decap3_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_die
+          physics: solid_die
+          parent_feature: lemm1
+          feature: initstress_decap3
+          property: S0
+          stress_format: diag_sxx_syy
+      fecap:
+        material:
+          component: comp_die
+          tag: mat_fecap_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_die
+          physics: solid_die
+          parent_feature: lemm1
+          feature: initstress_fecap
+          property: S0
+          stress_format: diag_sxx_syy
+
+  wafer_warp_model:
+    path: models/process_models/wafer_warp_model.mph
+    node_type: wafer
+    studies:
+      stress: std_warpage
+      cp: null
+    extractors:
+      bow_x_um: gev_bow_x
+      bow_y_um: gev_bow_y
+    outputs:
+      result_file: wafer_result.json
+    input_targets:
+      die: &die_target
+        material:
+          component: comp_wafer
+          tag: mat_die_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_wafer
+          physics: solid_wafer
+          parent_feature: lemm1
+          feature: initstress_die
+          property: S0
+          stress_format: diag_sxx_syy
+      onon:
+        material:
+          component: comp_wafer
+          tag: mat_onon_eff
+          density_group: def
+          density_property: density
+          elastic_group: anisotropic_eff
+          elastic_property: D
+          elasticity_order: standard
+          D_format: symmetric_upper21
+        stress:
+          type: initial_stress
+          component: comp_wafer
+          physics: solid_wafer
+          parent_feature: lemm1
+          feature: initstress_onon
+          property: S0
+          stress_format: diag_sxx_syy

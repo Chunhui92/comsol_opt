@@ -73,7 +73,7 @@ def load_base_params(params_path, flow_path, repo_root):
     if params_path is not None:
         return load_config(params_path)
     flow = load_flow_definition(flow_path, repo_root)
-    if flow.get("layout") == "layered_dag" and flow["steps"]:
+    if flow.get("layout") in {"layered_dag", "v2"} and flow["steps"]:
         return copy_params(flow["steps"][0]["parameters"])
     raise ValueError("params_path is required for legacy flow configs")
 
