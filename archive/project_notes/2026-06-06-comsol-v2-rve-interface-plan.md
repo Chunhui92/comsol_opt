@@ -204,7 +204,7 @@ Run:
 
 ```bash
 git diff --stat
-git diff -- docs/superpowers/specs/2026-06-06-comsol-v2-rve-interface-design.md docs/superpowers/plans/2026-06-06-comsol-v2-rve-interface.md python/comsol_opt tests/test_workflow.py java/ComsolStepWorker.java
+git diff -- archive/project_notes/2026-06-06-comsol-v2-rve-interface-design.md archive/project_notes/2026-06-06-comsol-v2-rve-interface-plan.md python/comsol_opt tests/test_workflow.py java/ComsolStepWorker.java
 ```
 
 Expected: changes are limited to the v2 interface slice and docs.

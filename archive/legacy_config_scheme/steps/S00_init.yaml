@@ -9,7 +9,7 @@ step:
 params:
   files:
     - "configs/params/global_params.txt"
-    - "configs/params/S00_init_params.txt"
+    - "archive/legacy_config_scheme/params/S00_init_params.txt"
 
 outputs:
   step_dir: "runs/{run_id}/S00_init"

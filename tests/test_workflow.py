@@ -743,11 +743,36 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertTrue((g1 / ".cache").exists())
             self.assertFalse((g1 / "trials" / "trial_0000" / "flow" / ".cache").exists())
 
-    def test_mock_flow_can_skip_wafer_solve_and_preserve_previous_result(self):
-        self.skipTest("v2 requires wafer to run every step")
+    def test_v2_mock_flow_runs_wafer_every_enabled_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_root = Path(tmp) / "runs"
+            cmd = [
+                sys.executable,
+                str(ROOT / "python" / "run_flow.py"),
+                "--backend",
+                "mock",
+                "--run-id",
+                "wafer_every_step",
+                "--runs-root",
+                str(run_root),
+            ]
+            subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=True)
 
-    def test_mock_flow_rejects_unknown_process_update_rule(self):
-        self.skipTest("v2 currently treats process updates as COMSOL template behavior")
+            run_dir = run_root / "wafer_every_step"
+            for step_dir in sorted(path for path in run_dir.iterdir() if path.name.startswith("S")):
+                result = load_json(step_dir / "step_result.json")
+                self.assertFalse(result.get("wafer_skipped"), step_dir.name)
+                self.assertTrue((step_dir / "wafer_result.json").exists(), step_dir.name)
+
+    def test_v2_process_update_rule_is_metadata_for_template_driven_steps(self):
+        from comsol_opt.flow_runner import load_flow_definition
+        from comsol_opt.step_input import validate_flow
+
+        flow = load_flow_definition(ROOT / "configs" / "flow.yaml", ROOT)
+        flow["steps"][0]["update_rule"] = "template_defined_rule_not_in_legacy_registry"
+
+        validate_flow(flow)
+        self.assertEqual(flow["steps"][0]["update_rule"], "template_defined_rule_not_in_legacy_registry")
 
 
 class ConfigTests(unittest.TestCase):

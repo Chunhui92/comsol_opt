@@ -54,7 +54,7 @@ configs/
 - `configs/steps/*.yaml` defines each process step in shorthand form. Most steps only list `run:` template changes; Python expands fixed-chain dependencies, implicit inheritance, ONON inputs, die, and wafer. Repeated chains can use `preset: full_chain`, and the three decap branches can be written once as `decap: <family>`.
 - `configs/templates.yaml` registers COMSOL template paths and explicit material/stress input target tags. Repeated model variants can be declared under `template_families`; Python expands them into ordinary template specs at load time.
 - `configs/extractors.yaml` registers study/evaluation tags.
-- `configs/params/*.txt` stores COMSOL-style parameters. YAML is not used for the active runtime parameter source.
+- `configs/params/*.txt` stores active COMSOL-style parameters. YAML is not used for the active runtime parameter source.
 - `configs/calibration_space.yaml` stores optimizer bounds, priors, scales, and units.
 
 Legacy compatibility files live under `archive/legacy_config_scheme/`.
@@ -172,6 +172,6 @@ Fields still marked `TODO_*` were not present in the source COMSOL note. The COM
 ## Design Notes
 
 - `comsol_20step_warpage_dev_spec.md` is the source process note for the v2 flow.
-- `docs/superpowers/specs/2026-06-06-comsol-v2-rve-interface-design.md` records the RVE/interface design decisions.
-- `docs/superpowers/plans/2026-06-06-comsol-v2-rve-interface.md` records the implementation plan used for this update.
+- `archive/project_notes/2026-06-06-comsol-v2-rve-interface-design.md` records the archived RVE/interface design decisions.
+- `archive/project_notes/2026-06-06-comsol-v2-rve-interface-plan.md` records the archived implementation plan used for the v2 update.
 - `docs/roadmap.md` tracks remaining work, especially real COMSOL tag validation and checkpointed staged reruns.

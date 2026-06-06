@@ -9,7 +9,7 @@ step:
 params:
   files:
     - "configs/params/global_params.txt"
-    - "configs/params/S02_trench_etch_params.txt"
+    - "archive/legacy_config_scheme/params/S02_trench_etch_params.txt"
 
 outputs:
   step_dir: "runs/{run_id}/S02_trench_etch"

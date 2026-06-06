@@ -74,10 +74,11 @@ python3 python/calibration_optuna.py --backend mock --mode staged --stages G2_tr
 - `configs/steps/`: active v2 S01-S20 step configs. These use shorthand `run:` declarations, `decap` groups, and `preset: full_chain`; do not re-expand them into full DAG YAML unless debugging.
 - `configs/templates.yaml`: COMSOL template registry plus material/stress input target tags. Repeated variants may live under `template_families`; loader expansion must still produce ordinary `templates` entries for validation/backends. Values copied from `comsol_20step_warpage_dev_spec.md` should be treated as authoritative; unresolved values are marked `TODO_*`.
 - `configs/extractors.yaml`: study/evaluation/extractor tag registry.
-- `configs/params/`: COMSOL parameter TXT files merged in runtime order.
+- `configs/params/`: active COMSOL parameter TXT files merged in runtime order.
 - `configs/calibration_space.yaml`: calibration bounds, priors, scales, units, and target steps.
 - `configs/experiments/`: experiment bow data used by summaries and loss.
-- `archive/legacy_config_scheme/`: old v1 configs, parameter maps, tags, docs, and archived step files.
+- `archive/legacy_config_scheme/`: old v1 configs, parameter maps, tags, docs, archived step files, and old local step parameter TXT files.
+- `archive/project_notes/`: archived implementation notes and plans that are no longer active project entrypoints.
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.
@@ -85,8 +86,8 @@ python3 python/calibration_optuna.py --backend mock --mode staged --stages G2_tr
 - `java/ComsolStepWorker.java`: first-pass COMSOL Java worker skeleton.
 - `tests/test_workflow.py`: unittest coverage for config loading, validation, mock flow, logging, loss, and calibration.
 - `docs/roadmap.md`: current roadmap and known remaining work.
-- `docs/superpowers/specs/2026-06-06-comsol-v2-rve-interface-design.md`: v2 RVE/interface design notes.
-- `docs/superpowers/plans/2026-06-06-comsol-v2-rve-interface.md`: implementation plan used for the v2 update.
+- `archive/project_notes/2026-06-06-comsol-v2-rve-interface-design.md`: archived v2 RVE/interface design notes.
+- `archive/project_notes/2026-06-06-comsol-v2-rve-interface-plan.md`: archived implementation plan used for the v2 update.
 - `comsol_20step_warpage_dev_spec.md`: source process note; it contains historical terminology, so active code/config should defer to the canonical v2 names below.
 
 ## Canonical Names
@@ -127,7 +128,7 @@ Do not hard-code process/material parameter values in Java. Treat TXT files as t
 
 Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`.
 `prior` is the nominal value; `scale` is the denominator for regularization against that prior.
-`archive/legacy_config_scheme/parameter_map.yaml` remains only for the legacy three-file parameter writer.
+`archive/legacy_config_scheme/parameter_map.yaml` remains only for the legacy three-file parameter writer. Old local step TXT files belong under `archive/legacy_config_scheme/params/`; keep `configs/params/` limited to files referenced by the active v2 flow.
 
 ## RVE and State Rules
 

@@ -23,7 +23,8 @@ This file tracks the next workflow improvements after the v2 20-step Python/mock
 - Step cache keys include staged parameter TXT content hashes.
 - Default calibration filters `configs/calibration_space.yaml` to groups whose `target_step` is enabled in the active flow.
 - `configs/` now contains the active v2 scheme; old nominal YAML, tag, three-file TXT configs, and seed step configs are archived under `archive/legacy_config_scheme/`.
-- `README.md` is the single active project overview. Older planning/spec documents are archived with the legacy scheme.
+- Old local step parameter TXT files and superseded implementation notes were moved out of the active config/docs paths into `archive/legacy_config_scheme/params/` and `archive/project_notes/`.
+- `README.md` is the single active project overview. Older planning/spec documents are archived under `archive/project_notes/`.
 - `dump_data` is the preferred JSON/YAML writer; `dump_json` is a compatibility alias.
 
 ## Next High-Priority Work
