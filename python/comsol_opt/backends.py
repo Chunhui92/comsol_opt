@@ -30,6 +30,7 @@ class ComsolBackend(SimulationBackend):
         cmd = [*self.command, str(step_input_path)]
         step_input = load_json(step_input_path)
         output_dir = Path(step_input["output_dir"])
+        unresolved = find_unresolved_comsol_tags(step_input)
         _append_step_log(
             output_dir,
             [
@@ -37,6 +38,11 @@ class ComsolBackend(SimulationBackend):
                 "command=" + " ".join(cmd),
             ],
         )
+        if unresolved:
+            _append_step_log(output_dir, ["worker_status=blocked unresolved_tags=" + ",".join(unresolved)])
+            raise RuntimeError(
+                "COMSOL backend has unresolved TODO tags in step_input.json: " + ", ".join(unresolved[:20])
+            )
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as exc:
@@ -64,3 +70,16 @@ def _append_step_log(output_dir, lines):
     with (log_dir / "step.log").open("a", encoding="utf-8") as handle:
         for line in lines:
             handle.write(line + "\n")
+
+
+def find_unresolved_comsol_tags(value, path="$"):
+    unresolved = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            unresolved.extend(find_unresolved_comsol_tags(item, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            unresolved.extend(find_unresolved_comsol_tags(item, f"{path}[{index}]"))
+    elif isinstance(value, str) and value.startswith("TODO_"):
+        unresolved.append(f"{path}={value}")
+    return unresolved

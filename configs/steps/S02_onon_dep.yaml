@@ -1,33 +1,6 @@
 step_id: S02
 step_name: onon_dep
-nodes:
-  pillar:
-    action: run
-    template: pillar_generic
-  sc:
-    action: default_from
-    source: pillar
-  decap1:
-    action: default_from
-    source: pillar
-  decap2:
-    action: default_from
-    source: pillar
-  decap3:
-    action: default_from
-    source: pillar
-  fecap:
-    action: default_from
-    source: pillar
-  die:
-    action: default_from
-    source: pillar
-  onon:
-    action: alias
-    source: pillar
-  wafer:
-    action: run
-    template: wafer_warp_model
-    inputs:
-      die: {ref: rve.die}
-      onon: {ref: rve.onon}
+default_from: pillar
+run:
+  pillar: p02_pillar_ONONdep
+  wafer: p02_wafer_ONONdep

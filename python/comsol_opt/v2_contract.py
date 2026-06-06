@@ -1,6 +1,14 @@
 CANONICAL_NODES = ("pillar", "sc", "decap1", "decap2", "decap3", "fecap", "die", "wafer", "onon")
 CANONICAL_NODE_SET = set(CANONICAL_NODES)
 RUN_ORDER = ("pillar", "sc", "decap1", "decap2", "decap3", "fecap", "die", "wafer")
+CHAIN_INPUTS = {
+    "decap1": ("pillar", "onon"),
+    "decap2": ("pillar", "onon"),
+    "decap3": ("pillar", "onon"),
+    "fecap": ("pillar", "sc", "onon"),
+    "die": ("decap1", "decap2", "decap3", "fecap", "onon"),
+    "wafer": ("die", "onon"),
+}
 
 LEGACY_NODE_NAMES = {
     "device",

@@ -83,11 +83,15 @@ public class ComsolStepWorker {
         Model model = ModelUtil.load("model_" + sanitize(node.id), node.templatePath);
         loadParameterFiles(model, parameterFiles);
         injectRveInputs(model, node, rves);
-        model.study(node.extractorTags.getOrDefault("study", DEFAULT_STUDY_TAG)).run();
+        model.study(node.studies.getOrDefault("stress", DEFAULT_STUDY_TAG)).run();
+        String cpStudy = node.studies.getOrDefault("cp", "");
+        if (!cpStudy.isEmpty()) {
+            model.study(cpStudy).run();
+        }
 
         double rho = firstReal(model, node.extractorTags.getOrDefault("rho", DEFAULT_RHO_GEV_TAG), 0.0);
         double[] stress = realVector(model, node.extractorTags.getOrDefault("stress", DEFAULT_STRESS_GEV_TAG), 2);
-        String matrixTag = node.extractorTags.getOrDefault("matrix_feature", DEFAULT_D_MATRIX_TAG);
+        String matrixTag = node.extractorTags.getOrDefault("D", DEFAULT_D_MATRIX_TAG);
         double[][] stiffness = matrix6x6(model, matrixTag);
 
         ModelUtil.remove(model.tag());
@@ -98,10 +102,10 @@ public class ComsolStepWorker {
         Model model = ModelUtil.load("model_wafer", node.templatePath);
         loadParameterFiles(model, parameterFiles);
         injectRveInputs(model, node, rves);
-        model.study(node.extractorTags.getOrDefault("study", DEFAULT_STUDY_TAG)).run();
+        model.study(node.studies.getOrDefault("stress", DEFAULT_STUDY_TAG)).run();
 
-        double bowX = firstReal(model, node.extractorTags.getOrDefault("bow_x", DEFAULT_BOW_GEV_TAG), 0.0);
-        double bowY = firstReal(model, node.extractorTags.getOrDefault("bow_y", DEFAULT_BOW_GEV_TAG), 0.0);
+        double bowX = firstReal(model, node.extractorTags.getOrDefault("bow_x_um", DEFAULT_BOW_GEV_TAG), 0.0);
+        double bowY = firstReal(model, node.extractorTags.getOrDefault("bow_y_um", DEFAULT_BOW_GEV_TAG), 0.0);
         double kx = firstReal(model, node.extractorTags.getOrDefault("kx", DEFAULT_BOW_GEV_TAG), 0.0);
         double ky = firstReal(model, node.extractorTags.getOrDefault("ky", DEFAULT_BOW_GEV_TAG), 0.0);
         ModelUtil.remove(model.tag());
@@ -123,28 +127,21 @@ public class ComsolStepWorker {
             applyStressTarget(model, transfer.stress, transfer);
         }
         for (Map.Entry<String, String> input : node.inputs.entrySet()) {
-            if (!input.getValue().startsWith("rve.")) {
-                continue;
-            }
-            String sourceId = input.getValue().substring("rve.".length());
+            String sourceId = input.getValue().startsWith("rve.") ? input.getValue().substring("rve.".length()) : input.getValue();
             RveResult rve = rves.get(sourceId);
             if (rve == null || !rve.valid) {
                 throw new IllegalStateException("Missing valid upstream RVE " + input.getValue());
             }
-            String slot = sanitize(input.getKey());
-            String componentTag = slot + "_component";
-            String materialTag = slot + "_material";
-            String elasticGroupTag = slot + "_elastic";
-            String elasticPropertyName = "D";
-            String parentFeatureTag = slot + "_lemm";
-            String stressFeatureTag = slot + "_initial_stress";
-            String D_upper21 = "D_upper21";
-            String dFormat = "symmetric_upper21";
-            if (!"symmetric_upper21".equals(dFormat) || D_upper21.isEmpty()) {
-                throw new IllegalStateException("Unsupported D transfer format for " + slot);
+            String targetText = objectText(objectText(node.templateSpecText, "input_targets"), input.getKey());
+            if (!targetText.isEmpty()) {
+                InputTransfer transfer = InputTransfer.fromRve(input.getKey(), input.getValue(), rve);
+                applyMaterialTarget(model, MaterialTarget.fromJson(objectText(targetText, "material")), transfer);
+                applyStressTarget(model, StressTarget.fromJson(objectText(targetText, "stress")), transfer);
+                continue;
             }
-            applyMaterialTarget(model, componentTag, materialTag, elasticGroupTag, elasticPropertyName, rve);
-            applyStressTarget(model, componentTag, nodePhysicsTag(slot), parentFeatureTag, stressFeatureTag, rve);
+            String slot = sanitize(input.getKey());
+            applyMaterialTarget(model, slot + "_component", slot + "_material", slot + "_elastic", "D", rve);
+            applyStressTarget(model, slot + "_component", nodePhysicsTag(slot), slot + "_lemm", slot + "_initial_stress", rve);
         }
     }
 
@@ -465,9 +462,11 @@ public class ComsolStepWorker {
         final String templatePath;
         final String output;
         final String resultFile;
+        final Map<String, String> studies;
         final Map<String, String> inputs;
         final List<InputTransfer> inputTransfers;
         final Map<String, String> extractorTags;
+        final String templateSpecText;
 
         private NodeRun(
             String id,
@@ -477,9 +476,11 @@ public class ComsolStepWorker {
             String templatePath,
             String output,
             String resultFile,
+            Map<String, String> studies,
             Map<String, String> inputs,
             List<InputTransfer> inputTransfers,
-            Map<String, String> extractorTags
+            Map<String, String> extractorTags,
+            String templateSpecText
         ) {
             this.id = id;
             this.type = type;
@@ -488,28 +489,43 @@ public class ComsolStepWorker {
             this.templatePath = templatePath;
             this.output = output;
             this.resultFile = resultFile;
+            this.studies = studies;
             this.inputs = inputs;
             this.inputTransfers = inputTransfers;
             this.extractorTags = extractorTags;
+            this.templateSpecText = templateSpecText;
         }
     }
 
     private static List<NodeRun> parseNodes(String text) {
         List<NodeRun> nodes = new ArrayList<>();
-        String array = arrayText(text, "nodes");
+        String array = arrayText(text, "runs");
+        if (array.isEmpty()) {
+            array = arrayText(text, "nodes");
+        }
+        Map<String, String> templateSpecs = rawTopLevelObjects(objectText(text, "template_specs"));
         for (String nodeText : splitTopLevelArrayObjects(array)) {
+            String nodeId = optionalStringValue(nodeText, "node").isEmpty() ? optionalStringValue(nodeText, "id") : optionalStringValue(nodeText, "node");
+            String nodeType = optionalStringValue(nodeText, "type").isEmpty() ? nodeId : optionalStringValue(nodeText, "type");
+            String templateKey = optionalStringValue(nodeText, "template");
+            String specText = templateSpecs.getOrDefault(templateKey, "");
+            String outputsText = objectText(specText, "outputs");
+            Map<String, String> specStudies = objectStrings(objectText(specText, "studies"));
+            Map<String, String> specExtractors = objectStrings(objectText(specText, "extractors"));
             nodes.add(
                 new NodeRun(
-                    stringValue(nodeText, "id"),
-                    stringValue(nodeText, "type"),
+                    nodeId,
+                    nodeType,
                     stringValue(nodeText, "action"),
-                    optionalStringValue(nodeText, "template"),
-                    optionalStringValue(nodeText, "template_path"),
-                    optionalStringValue(nodeText, "output"),
-                    optionalStringValue(nodeText, "result_file"),
+                    templateKey,
+                    optionalStringValue(nodeText, "template_path").isEmpty() ? optionalStringValue(specText, "path") : optionalStringValue(nodeText, "template_path"),
+                    optionalStringValue(nodeText, "output").isEmpty() ? ("wafer".equals(nodeId) ? "wafer_result" : "rve." + nodeId) : optionalStringValue(nodeText, "output"),
+                    optionalStringValue(nodeText, "result_file").isEmpty() ? optionalStringValue(outputsText, "result_file") : optionalStringValue(nodeText, "result_file"),
+                    specStudies.isEmpty() ? objectStrings(objectText(nodeText, "studies")) : specStudies,
                     objectStrings(objectText(nodeText, "inputs")),
                     parseInputTransfers(nodeText),
-                    objectStrings(objectText(nodeText, "extractor_tags"))
+                    specExtractors.isEmpty() ? objectStrings(objectText(nodeText, "extractors")) : specExtractors,
+                    specText
                 )
             );
         }
@@ -582,6 +598,19 @@ public class ComsolStepWorker {
 
         boolean hasTargets() {
             return material != null && stress != null;
+        }
+
+        static InputTransfer fromRve(String slot, String sourceRef, RveResult rve) {
+            return new InputTransfer(
+                slot,
+                sourceRef,
+                rve.rho + "[kg/m^3]",
+                rve.sxx + "[Pa]",
+                rve.syy + "[Pa]",
+                symmetricUpper21Expressions(rve),
+                null,
+                null
+            );
         }
     }
 

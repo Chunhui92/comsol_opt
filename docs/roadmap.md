@@ -7,8 +7,14 @@ This file tracks the next workflow improvements after the v2 20-step Python/mock
 - `configs/flow.yaml` is now a v2 20-step flow using canonical nodes: `pillar`, `sc`, `decap1`, `decap2`, `decap3`, `fecap`, `die`, `wafer`, and `onon`.
 - Legacy active step configs were moved under `archive/legacy_config_scheme/steps/`; active `configs/steps/` now contains the v2 20-step process skeleton.
 - Python v2 validation rejects legacy names, prevents `onon` from running as a model node, and requires wafer to run every step.
-- Python v2 step input expansion writes Java-ready RVE payloads with `D_upper21`, `symmetric_upper21`, and explicit material/stress target tags.
-- The mock backend supports v2 `run`, `inherit`, `default_from`, `alias`, same-step working-state references, stress-only D inheritance, and per-step `logs/step.log` audit logs.
+- Python v2 step input expansion writes Java-ready RVE payloads with `D_upper21`, `symmetric_upper21`, explicit material/stress target tags, and template-level `component` / `physics` / `studies` / `extractors`.
+- V2 `step_input.json` now uses a compact contract with de-duplicated `template_specs`, de-duplicated `rve_inputs`, and compact `runs`.
+- ONON is now a global RVE input for decap, fecap, die, and wafer.
+- Active `configs/steps/*.yaml` now use shorthand `run:` declarations, `decap` groups, and `preset: full_chain`; the loader expands fixed-chain dependencies and implicit inheritance.
+- `configs/templates.yaml` supports `template_families` for repeated variants such as `decap_model_decap1/2/3`; the loader expands families into ordinary template specs.
+- `configs/templates.yaml` now uses concrete cap/fecap component, physics, stress-study, and CP-study tags from `comsol_20step_warpage_dev_spec.md`; still-missing real COMSOL tags are marked `TODO_*`.
+- The COMSOL backend now fails fast before invoking Java if `step_input.json` contains unresolved `TODO_*` tags.
+- The mock backend supports v2 `run`, `inherit`, `default_from`, `alias`, same-step working-state references, stress-only D inheritance, per-step `logs/step.log`, and machine-readable `logs/interface.json` interface audits.
 - V2 summary output uses canonical status fields and `bow_x_um` / `bow_y_um`; loss calculation accepts these fields directly.
 - The COMSOL backend wrapper writes dispatch/result information to `logs/step.log`.
 - `java/ComsolStepWorker.java` has a first-pass expanded-input skeleton with `MaterialTarget`, `StressTarget`, `D_upper21`, and material/stress application helpers.

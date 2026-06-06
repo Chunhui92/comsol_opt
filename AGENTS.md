@@ -4,26 +4,29 @@
 
 This repository implements the Python orchestration layer for a multi-scale COMSOL wafer-warpage calibration workflow.
 
-The intended flow is:
+The active flow is the v2 20-step process chain:
 
 ```text
-process step
-  -> device_main/device_aux/onon_device RVEs
-  -> parallel mat1/mat2/mat3/mat4 RVEs
+process step S01..S20
+  -> pillar / sc RVEs
+  -> decap1 / decap2 / decap3 / fecap RVEs
   -> die RVE
   -> wafer model
-  -> bow_x/bow_y comparison
+  -> bow_x_um / bow_y_um comparison
   -> staged calibration
 ```
 
-COMSOL model geometry, studies, and evaluation tags are assumed to be stable. The Python layer owns state transfer, parameter file generation, backend dispatch, mock validation, loss calculation, and calibration.
+The Python layer owns config expansion, parameter TXT staging, state transfer, backend dispatch, mock validation, runtime logs, summary/loss calculation, and calibration. COMSOL model geometry, studies, extractor tags, and material/stress interface tags are expected to be provided by COMSOL templates and registered in config.
 
 Current implementation status:
 
-- The Python orchestrator and mock backend follow the layered step DAG in `configs/steps/*.yaml`: each node reads its declared template/input references, stages parameter TXT files, runs or inherits, writes node result files, updates `state_out.json`, and finally runs wafer after die.
-- The Python validator fails fast on layered DAG mistakes: invalid update rules, unknown node actions/types, unresolved templates, bad outputs, missing required inputs, and unavailable upstream RVE references.
-- The Java COMSOL worker now has a first-pass DAG skeleton: it parses the active `nodes` contract, honors `run` / `inherit`, loads `parameter_txt_order`, writes `manifest.json`, writes each node's configured `result_file`, carries `rve.*` state forward, preserves `materials_state` / `geometry_state`, and appends wafer history when wafer runs.
-- Real COMSOL RVE transfer uses provisional assumptions in Java. Upstream RVE values are injected into downstream COMSOL models as parameters named `input_<slot>_sxx`, `input_<slot>_syy`, `input_<slot>_rho`, `input_<slot>_d11`, and `input_<slot>_d22`. Replace these names once the real COMSOL templates expose their expected parameter/table inputs.
+- `configs/flow.yaml` is a v2 20-step entrypoint. It lists S01-S20 step files, shared parameter TXT order, template registry path, and the global ONON alias source.
+- Active step configs live in `configs/steps/S01_*.yaml` through `S20_*.yaml`.
+- Old v1 layered step configs were moved to `archive/legacy_config_scheme/steps/`.
+- The Python validator rejects legacy runtime node names in v2 configs.
+- The mock backend supports v2 `run`, `inherit`, `default_from`, and `alias` actions, including same-step working-state references and stress-only D inheritance.
+- The COMSOL backend writes worker dispatch/status information into `logs/step.log`.
+- `java/ComsolStepWorker.java` is a first-pass COMSOL 6.3 skeleton for expanded RVE inputs, material target writes, stress target writes, and `D_upper21` handling. It still needs real COMSOL export/tag validation before production use.
 
 ## Important Commands
 
@@ -60,53 +63,135 @@ python3 python/calibration_optuna.py --backend mock --run-id calib_001 --n-trial
 Run selected staged calibration:
 
 ```bash
-python3 python/calibration_optuna.py --backend mock --mode staged --stages G0_init,G2_trench_release --run-id staged_001 --n-trials 5
+python3 python/calibration_optuna.py --backend mock --mode staged --stages G2_trench_release,G10_final --run-id staged_001 --n-trials 5
 ```
 
 ## Repository Layout
 
-- `configs/flow.yaml`: layered DAG entrypoint; references enabled per-step YAML files.
-- `configs/steps/`: per-step DAG configs with explicit node `run` / `inherit` actions.
-- `configs/templates.yaml`: COMSOL template registry.
+- `README.md`: active project overview.
+- `AGENTS.md`: project-specific instructions for coding agents.
+- `configs/flow.yaml`: active v2 flow entrypoint.
+- `configs/steps/`: active v2 S01-S20 step configs. These use shorthand `run:` declarations, `decap` groups, and `preset: full_chain`; do not re-expand them into full DAG YAML unless debugging.
+- `configs/templates.yaml`: COMSOL template registry plus material/stress input target tags. Repeated variants may live under `template_families`; loader expansion must still produce ordinary `templates` entries for validation/backends. Values copied from `comsol_20step_warpage_dev_spec.md` should be treated as authoritative; unresolved values are marked `TODO_*`.
 - `configs/extractors.yaml`: study/evaluation/extractor tag registry.
 - `configs/params/`: COMSOL parameter TXT files merged in runtime order.
-- `configs/calibration_space.yaml`: parameter bounds for staged/global calibration.
-- `configs/experiments/`: experiment bow data for summaries and loss.
-- `archive/legacy_config_scheme/`: old nominal YAML, parameter map, template tags, and three-file TXT parameter scheme.
+- `configs/calibration_space.yaml`: calibration bounds, priors, scales, units, and target steps.
+- `configs/experiments/`: experiment bow data used by summaries and loss.
+- `archive/legacy_config_scheme/`: old v1 configs, parameter maps, tags, docs, and archived step files.
 - `python/run_flow.py`: flow orchestrator CLI.
 - `python/calibration_optuna.py`: calibration CLI with optional Optuna and deterministic fallback.
 - `python/comsol_opt/`: orchestration package.
+- `python/comsol_opt/v2_contract.py`: canonical v2 node names and RVE payload helpers.
 - `java/ComsolStepWorker.java`: first-pass COMSOL Java worker skeleton.
-- `tests/test_workflow.py`: unittest coverage for parameter txt updates, state inheritance, mock flow, and calibration.
+- `tests/test_workflow.py`: unittest coverage for config loading, validation, mock flow, logging, loss, and calibration.
+- `docs/roadmap.md`: current roadmap and known remaining work.
+- `docs/superpowers/specs/2026-06-06-comsol-v2-rve-interface-design.md`: v2 RVE/interface design notes.
+- `docs/superpowers/plans/2026-06-06-comsol-v2-rve-interface.md`: implementation plan used for the v2 update.
+- `comsol_20step_warpage_dev_spec.md`: source process note; it contains historical terminology, so active code/config should defer to the canonical v2 names below.
+
+## Canonical Names
+
+Use these runtime node names everywhere in active Python code, active YAML, summaries, logs, and new tests:
+
+- `pillar`
+- `sc`
+- `decap1`
+- `decap2`
+- `decap3`
+- `fecap`
+- `die`
+- `wafer`
+- `onon`
+
+Do not introduce active runtime mappings for legacy names such as `device_main`, `device_aux`, `onon_device`, `mat1`, `mat2`, `mat3`, or `mat4`. Those may appear only in archived docs/configs or in tests that intentionally verify legacy-name rejection.
+
+Historical mapping:
+
+- `mat1 -> decap1`
+- `mat2 -> decap2`
+- `mat3 -> decap3`
+- `mat4 -> fecap`
+- `onon_device -> onon`
 
 ## COMSOL Parameter Contract
 
-The layered Python flow copies COMSOL parameter TXT files into each step directory.
+The Python flow copies COMSOL parameter TXT files into each step directory.
 The load order is recorded in `step_input.json` as `parameter_txt_order`, and paths are recorded under `parameter_txt_paths`.
-A real COMSOL Java worker should load these files in order before solving any device, mat, die, or wafer model.
+A real COMSOL Java worker should load these files in order before solving any model.
 
-When no explicit `--params` file is supplied, each layered step uses parameters parsed from its own TXT files.
-When calibration supplies a params YAML, that file is treated as the trial/global override for all enabled steps.
-Step cache keys include staged parameter TXT file content hashes, not just mapped Python parameters.
+When no explicit `--params` file is supplied, each v2 step uses parameters parsed from its TXT stack.
+When calibration supplies a params YAML, that file is treated as the trial/global override for enabled steps.
+Step cache keys include staged parameter TXT content hashes, not just mapped Python parameters.
 
-Do not hard-code parameter values in Java. Treat the txt files as the runtime parameter source.
+Do not hard-code process/material parameter values in Java. Treat TXT files as the runtime parameter source.
 
 Keep calibration bounds, `prior`, `scale`, and `unit` in `configs/calibration_space.yaml`.
 `prior` is the nominal value; `scale` is the denominator for regularization against that prior.
-`archive/legacy_config_scheme/parameter_map.yaml` remains for the legacy three-file parameter writer.
+`archive/legacy_config_scheme/parameter_map.yaml` remains only for the legacy three-file parameter writer.
 
 ## RVE and State Rules
 
-- `mat1`, `mat2`, `mat3`, and `mat4` are parallel die inputs, not a serial chain.
-- `device_main` normally feeds mat1/mat2/mat3; `device_aux` normally feeds mat4.
-- `die` receives mat1~4. `wafer` receives only `rve.die` and `rve.onon_device`.
-- Each node in `configs/steps/*.yaml` must explicitly declare `action: run` or `action: inherit`.
-- Inherited nodes must exist in the previous `state_out.json` under `rve.<node>` and must have `valid=true`.
-- If `run_wafer` is false, the backend should preserve the incoming `wafer_result`, skip history append, and set `wafer_skipped=true`.
-- `ONON.sigma_O_base` and `ONON.sigma_N_base` are only set at S01.
-- Later O/N changes use release factors only.
-- S07 uses `wafer_with_asi_template.mph`.
-- S08 switches back to `wafer_base_template.mph` and sets `aSi_layer.active=false`.
+- `decap1`, `decap2`, `decap3`, and `fecap` are parallel die inputs, not a serial chain.
+- `pillar` normally feeds `decap1`, `decap2`, `decap3`, and `fecap`.
+- `sc` feeds `fecap` when the fecap template declares an `sc` input.
+- `decap1`, `decap2`, and `decap3` consume `pillar + onon`.
+- `fecap` consumes `pillar + sc + onon`.
+- `die` consumes `decap1 + decap2 + decap3 + fecap + onon`.
+- `wafer` consumes `rve.die + rve.onon` unless a real wafer template explicitly requires more.
+- `onon` is an alias/snapshot, not a standalone COMSOL run node. The default source is configured in `configs/flow.yaml` as S02 `pillar`.
+- Each active step node must explicitly declare `action: run`, `action: inherit`, `action: default_from`, or `action: alias`.
+- Inherited nodes must exist in the prior state under `rve.<node>` and have `valid=true`.
+- In v2, wafer is expected to run every enabled step.
+- If a model is stress-only and has no CP/D extractor for the current step, update `rho` and `stress_eff`, then inherit `D` from the previous valid same-node RVE.
+- Active step YAML normally uses shorthand `run:`. The loader expands it into run/default/alias nodes and treats unchanged nodes as implicit inheritance via the copied `state_in`.
+- Use `decap: <family>` to run all three decap branches. The loader expands it to `<family>_decap1`, `<family>_decap2`, and `<family>_decap3`.
+- Use `preset: full_chain` for repeated pillar -> decap/fecap -> die -> wafer steps. Step-local `run:` entries override preset defaults.
+
+## D Matrix and Java Input Rules
+
+Each RVE state keeps the full symmetric 6x6 `D` matrix for readability and validation.
+The compact Java-facing `step_input.json` contract should use:
+
+- `template_registry`: source template registry path.
+- `template_specs`: only the template specs used by this step, keyed by template name.
+- `rve_inputs`: upstream RVE payloads used by this step, keyed once by source name.
+- `runs`: compact execution plan with `node`, `template`, and `inputs`.
+
+RVE payloads in `rve_inputs` include:
+
+- `rho`
+- `sxx`
+- `syy`
+- `D`
+- `D_upper21`
+- `symmetric_upper21`
+
+`D_upper21` is the compact 21-value upper-triangular representation of the symmetric 6x6 matrix. Use helpers in `python/comsol_opt/v2_contract.py` instead of open-coded matrix flattening.
+
+For COMSOL 6.3 Java work:
+
+- Load model templates from `template_specs` or `configs/templates.yaml`.
+- Write `rho` into the configured material density field.
+- Write `D_upper21` into the configured anisotropic material stiffness field using the template's expected ordering.
+- Write `sxx` and `syy` into the configured initial-stress feature/tag.
+- Do not maintain separate Python-side alias maps for material names, model names, or bow names. Put real COMSOL tags in `configs/templates.yaml`.
+- The cap/fecap component, physics, stress-study, and CP-study tags available in `comsol_20step_warpage_dev_spec.md` are already written into `configs/templates.yaml`.
+- Treat every `TODO_*` field as unresolved. The COMSOL backend must fail fast before invoking Java if any `TODO_*` value remains in `step_input.json`.
+
+## Runtime Logs
+
+Every mock or COMSOL step should write:
+
+```text
+logs/step.log
+logs/interface.json
+```
+
+The human log should be useful for auditing the full simulation path. Include the step id/name, backend, model/template path, node action, RVE source, input slots, material/stress target tags, result files, wafer inputs, and bow output.
+
+`logs/interface.json` is the machine-readable interface audit. Keep it focused on COMSOL wiring: run node, template, model path, studies, extractors, input RVE source/source step/source node, material target, stress target, and result file. Do not store full RVE matrices there unless debugging a specific failure.
+
+The default location is `runs/<run-id>/<step-id>/logs/step.log`. Unit tests use temporary run roots, so test logs are normally deleted when tests finish. The COMSOL backend should also log the Java command, worker status, unresolved `TODO_*` blocks, and any worker failure details.
 
 ## Backend Notes
 
@@ -119,10 +204,10 @@ SimulationBackend.run_step(step_input_path) -> dict
 Available backends:
 
 - `dryrun`: validates and writes `step_input.json` only.
-- `mock`: runs deterministic Python mock physics and writes `state_out.json`, `step_result.json`, `manifest.json`, and node result files.
-- `comsol`: reserved for invoking the Java COMSOL worker. The current Java file follows the active DAG contract, but still needs real COMSOL template/tag validation.
+- `mock`: runs deterministic Python mock physics and writes `state_out.json`, `step_result.json`, `manifest.json`, node result files, wafer result, `logs/step.log`, and `logs/interface.json`.
+- `comsol`: invokes the Java COMSOL worker. The current Java file follows the v2 input contract but still needs real COMSOL template/tag validation.
 
-The Java COMSOL worker must output the same JSON shape as the mock backend.
+The Java COMSOL worker must output the same high-level JSON shape as the mock backend.
 
 Staged calibration writes under `runs/<run-id>/out/<step>_<group>/`. Each stage must contain `stage.log`, per-trial flow outputs, `calibration_history.csv`, `best_params.yaml`, and `best_summary.csv`. Later stages must start from the previous stage's best params.
 
@@ -133,7 +218,16 @@ If a user explicitly requests a stage targeting a disabled or missing step, fail
 
 ## Current Roadmap
 
-Keep `docs/roadmap.md` current when changing workflow scope. The largest remaining items are real COMSOL template/tag validation, replacing provisional RVE injection names with real model inputs, remaining real step configs, and start/stop checkpointed staged reruns.
+Keep `docs/roadmap.md` current when changing workflow scope.
+
+Largest remaining items:
+
+- Validate real COMSOL 6.3 model paths, studies, material tags, stress tags, and extractor tags.
+- Replace provisional tags in `configs/templates.yaml` with tags exported from real COMSOL models.
+- Harden `java/ComsolStepWorker.java` parsing and compile/runtime behavior against COMSOL 6.3.
+- Add calibration COMSOL command plumbing where still missing.
+- Add start/stop checkpointed staged reruns.
+- Add Java worker execution coverage once CI/local tooling has Java/COMSOL stubs.
 
 ## Development Rules
 
@@ -143,3 +237,5 @@ Keep `docs/roadmap.md` current when changing workflow scope. The largest remaini
 - Before reporting completion, run `python3 -m unittest tests/test_workflow.py -v`.
 - Use `dump_data` for new JSON/YAML writes. `dump_json` remains only as a compatibility alias.
 - Keep generated run outputs under `runs/` or `/private/tmp`; do not commit generated run directories.
+- Keep `.serena/`, caches, bytecode, and local tooling artifacts out of commits.
+- Update `README.md`, `AGENTS.md`, and `docs/roadmap.md` when changing workflow scope or backend contracts.

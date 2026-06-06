@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 
 from .cache_manager import StepCache
@@ -8,6 +9,7 @@ from .params import flatten_params, model_params_from_comsol_txt
 from .state import initial_state, initial_state_v2
 from .step_input import build_step_input, validate_flow
 from .summary import load_experiment, write_summary
+from .v2_contract import CHAIN_INPUTS, RUN_ORDER
 
 
 DEFAULT_PARAMETER_MAP_PATH = "archive/legacy_config_scheme/parameter_map.yaml"
@@ -62,7 +64,9 @@ def load_flow_definition(flow_path, repo_root):
 
 def _load_v2_flow_definition(flow, repo_root):
     templates_ref = flow.get("templates", {})
+    template_registry = templates_ref if isinstance(templates_ref, str) else None
     templates = load_config(repo_root / templates_ref) if isinstance(templates_ref, str) else templates_ref
+    templates = _expand_v2_template_families(templates or {})
     parameter_files = list(flow.get("parameter_txt_order", []))
     txt_paths = [repo_root / item for item in parameter_files]
     raw_parameters = parse_parameter_txt_files(txt_paths)
@@ -96,6 +100,7 @@ def _load_v2_flow_definition(flow, repo_root):
     flow = dict(flow)
     flow["layout"] = "v2"
     flow["templates"] = templates
+    flow["template_registry"] = template_registry
     flow["steps"] = expanded_steps
     return flow
 
@@ -112,7 +117,139 @@ def _normalize_v2_step(step_cfg):
     step.setdefault("process_type", "v2")
     step.setdefault("update_rule", "init")
     step.setdefault("experiment_step", step["id"])
+    if "nodes" not in step and ("run" in step or "preset" in step):
+        step["nodes"] = _expand_v2_shorthand_nodes(step)
     return step
+
+
+def _expand_v2_shorthand_nodes(step):
+    run = _expand_v2_run_groups(step.get("run") or {}, step.get("preset"))
+    merge = step.get("merge") or {}
+    default_from = step.get("default_from")
+    alias = step.get("alias") or {}
+    nodes = {}
+    for node in RUN_ORDER:
+        if node in run:
+            template = run[node]
+            if isinstance(template, dict):
+                node_cfg = {"action": "run", **template}
+            else:
+                node_cfg = {"action": "run", "template": template}
+            if node in merge:
+                node_cfg["merge"] = merge[node]
+            inputs = _v2_default_inputs(node)
+            if inputs:
+                node_cfg["inputs"] = inputs
+            nodes[node] = node_cfg
+        elif default_from and node not in {"wafer"}:
+            nodes[node] = {"action": "default_from", "source": default_from}
+
+    if default_from:
+        nodes["onon"] = {"action": "alias", "source": default_from}
+    for node, source in alias.items():
+        nodes[node] = {"action": "alias", "source": source}
+
+    downstream_templates = step.get("downstream_templates", {})
+    if any(name in run for name in ("decap1", "decap2", "decap3", "fecap")) or "die" in run:
+        nodes["die"] = {"action": "run", "template": downstream_templates.get("die", "die_model"), "inputs": _v2_default_inputs("die")}
+    if any(nodes.get(name, {}).get("action") == "run" for name in ("die", "wafer")):
+        nodes["wafer"] = {
+            "action": "run",
+            "template": run.get("wafer", downstream_templates.get("wafer", "wafer_warp_model")),
+            "inputs": _v2_default_inputs("wafer"),
+        }
+    elif "wafer" in run:
+        nodes["wafer"] = {"action": "run", "template": run["wafer"], "inputs": _v2_default_inputs("wafer")}
+
+    return {name: nodes[name] for name in [*RUN_ORDER, "onon"] if name in nodes}
+
+
+def _expand_v2_run_groups(run, preset=None):
+    expanded = {}
+    if preset:
+        if preset != "full_chain":
+            raise ValueError(f"Unsupported v2 preset: {preset}")
+        expanded.update(_decap_group_templates("decap_model"))
+        expanded["fecap"] = "fecap_model_all"
+
+    run = dict(run)
+    decap_group = run.pop("decap", None)
+    if decap_group is not None:
+        expanded.update(_decap_group_templates(decap_group))
+    expanded.update(run)
+    return expanded
+
+
+def _decap_group_templates(group):
+    if isinstance(group, dict):
+        missing = {"decap1", "decap2", "decap3"} - set(group)
+        if missing:
+            raise ValueError(f"decap group missing members: {sorted(missing)}")
+        return {name: group[name] for name in ("decap1", "decap2", "decap3")}
+    return {name: f"{group}_{name}" for name in ("decap1", "decap2", "decap3")}
+
+
+def _v2_default_inputs(node):
+    return {slot: {"ref": f"rve.{source}"} for slot, source in zip(CHAIN_INPUTS.get(node, ()), CHAIN_INPUTS.get(node, ()))}
+
+
+def _expand_v2_template_families(registry):
+    if "template_families" not in registry:
+        return registry
+    expanded = deepcopy(registry)
+    templates = dict(expanded.get("templates", {}))
+    for family_name, family in expanded.get("template_families", {}).items():
+        base = family.get("base", {})
+        target_prefix = family.get("target_prefix") or family_name.split("_", 1)[0].upper()
+        target_slots = family.get("input_target_slots", [])
+        for node_type, overrides in family.get("members", {}).items():
+            template_key = f"{family_name}_{node_type}"
+            spec = _deep_merge_dicts(base, overrides or {})
+            spec.setdefault("node_type", node_type)
+            spec.setdefault("outputs", {"result_file": f"{node_type}_rve.json"})
+            if target_slots and "input_targets" not in spec:
+                spec["input_targets"] = {
+                    slot: _v2_family_input_target(target_prefix, slot, spec.get("component"), spec.get("physics"))
+                    for slot in target_slots
+                }
+            templates[template_key] = spec
+    expanded["templates"] = templates
+    return expanded
+
+
+def _deep_merge_dicts(base, override):
+    merged = deepcopy(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _v2_family_input_target(prefix, slot, component, physics):
+    slot_prefix = slot.upper()
+    return {
+        "material": {
+            "component": component,
+            "tag": f"TODO_{prefix}_{slot_prefix}_MATERIAL_TAG",
+            "density_group": "def",
+            "density_property": "density",
+            "elastic_group": f"TODO_{prefix}_{slot_prefix}_ELASTIC_GROUP",
+            "elastic_property": f"TODO_{prefix}_{slot_prefix}_ELASTIC_PROPERTY",
+            "elasticity_order": "standard",
+            "D_format": "symmetric_upper21",
+        },
+        "stress": {
+            "type": "initial_stress",
+            "component": component,
+            "physics": physics,
+            "parent_feature": f"TODO_{prefix}_{slot_prefix}_STRESS_PARENT",
+            "feature": f"TODO_{prefix}_{slot_prefix}_STRESS_FEATURE",
+            "property": "S0",
+            "stress_format": "diag_sxx_syy",
+        },
+    }
 
 
 def _resolve_node(node, templates, extractors):

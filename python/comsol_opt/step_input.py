@@ -1,7 +1,7 @@
 from .schemas import StepInput
 from .process import VALID_UPDATE_RULES
 from .config_io import load_json
-from .v2_contract import CANONICAL_NODE_SET, LEGACY_NODE_NAMES, RUN_ORDER, V2_ACTIONS
+from .v2_contract import CANONICAL_NODE_SET, CHAIN_INPUTS, LEGACY_NODE_NAMES, RUN_ORDER, V2_ACTIONS
 from .v2_contract import canonical_ref_name, rve_payload_for_java
 
 
@@ -264,9 +264,13 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
     templates = _v2_templates(step, flow)
     node_map = step.get("nodes", {})
     nodes = []
+    runs = []
+    template_specs = {}
+    rve_inputs = {}
     ordered_names = [name for name in RUN_ORDER if name in node_map]
     if "onon" in node_map:
         ordered_names.append("onon")
+    produced = set()
     for node_id in ordered_names:
         node = dict(node_map[node_id])
         entry = {
@@ -279,14 +283,10 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
         template_key = node.get("template")
         if template_key:
             template = templates[template_key]
+            template_specs[template_key] = template
             entry.update(
                 {
                     "template": template_key,
-                    "template_path": template.get("path", ""),
-                    "model_path": template.get("path", ""),
-                    "studies": dict(template.get("studies", {})),
-                    "extractors": dict(template.get("extractors", {})),
-                    "input_targets": dict(template.get("input_targets", {})),
                     "result_file": template.get("outputs", {}).get(
                         "result_file",
                         "wafer_result.json" if node_id == "wafer" else f"{node_id}_rve.json",
@@ -294,18 +294,28 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
                 }
             )
             if node["action"] == "run":
-                entry["inputs"] = _expand_v2_inputs(node, template, state)
+                entry["inputs"] = _compact_v2_inputs(node_id, node)
+                runs.append(dict(entry))
+                for source in entry["inputs"].values():
+                    if source not in produced and source in state.get("rve", {}):
+                        rve_inputs[source] = rve_payload_for_java(state["rve"][source])
         if node["action"] in {"default_from", "alias"}:
             entry["source"] = node.get("source")
         if "merge" in node:
             entry["merge"] = dict(node["merge"])
         nodes.append(entry)
+        if node["action"] == "run":
+            produced.add(node_id)
     return {
         "step_id": step["id"],
         "step_name": step["name"],
         "process_type": step.get("process_type", "v2"),
         "update_rule": step.get("update_rule", "init"),
-        "templates": step.get("templates") or flow.get("templates", {}),
+        "template_registry": flow.get("template_registry") or step.get("template_registry") or "",
+        "template_specs": template_specs,
+        "rve_inputs": rve_inputs,
+        "runs": runs,
+        "templates": {},
         "nodes": nodes,
         "run_wafer": True,
         "parameters": params,
@@ -315,6 +325,19 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
         "state_in": str(state_in_path),
         "output_dir": str(output_dir),
     }
+
+
+def _compact_v2_inputs(node_id, node):
+    inputs = {}
+    for slot in CHAIN_INPUTS.get(node_id, ()):
+        inputs[slot] = slot
+    for slot, input_cfg in node.get("inputs", {}).items():
+        if isinstance(input_cfg, dict):
+            ref = input_cfg.get("ref") or input_cfg.get("source")
+            inputs[slot] = canonical_ref_name(ref) if ref else slot
+        else:
+            inputs[slot] = canonical_ref_name(input_cfg)
+    return inputs
 
 
 def _expand_v2_inputs(node, template, state):

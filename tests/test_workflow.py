@@ -87,12 +87,63 @@ class V2FlowTests(unittest.TestCase):
             )
 
             fecap = next(node for node in step_input["nodes"] if node["node"] == "fecap")
-            pillar_input = fecap["inputs"]["pillar"]
-            self.assertEqual(pillar_input["source"], "rve.pillar")
-            self.assertEqual(pillar_input["target"]["material"]["elastic_property"], "D")
-            self.assertEqual(pillar_input["target"]["stress"]["property"], "S0")
-            self.assertEqual(len(pillar_input["rve"]["D_upper21"]), 21)
-            self.assertEqual(pillar_input["rve"]["D_format"], "symmetric_upper21")
+            self.assertEqual(fecap["inputs"]["pillar"], "pillar")
+            self.assertEqual(fecap["inputs"]["onon"], "onon")
+            target = step_input["template_specs"]["fecap_model_all"]["input_targets"]["pillar"]
+            self.assertEqual(target["material"]["D_format"], "symmetric_upper21")
+            self.assertEqual(target["material"]["elastic_property"], "TODO_FECAP_PILLAR_ELASTIC_PROPERTY")
+            self.assertEqual(target["stress"]["property"], "S0")
+            self.assertEqual(len(step_input["rve_inputs"]["pillar"]["D_upper21"]), 21)
+            self.assertEqual(step_input["rve_inputs"]["pillar"]["D_format"], "symmetric_upper21")
+
+    def test_v2_step_input_writes_compact_runs_and_deduplicated_rves(self):
+        from comsol_opt.flow_runner import load_flow_definition
+        from comsol_opt.step_input import build_step_input, validate_flow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "state_in.json"
+            params_path = root / "global.txt"
+            params_path.write_text("x 1\n", encoding="utf-8")
+            state = {
+                "step_id": "S03",
+                "step_name": "previous",
+                "wafer_result": {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0},
+                "rve": {name: valid_rve_dict() for name in ("pillar", "sc", "decap1", "decap2", "decap3", "fecap", "die", "onon")},
+                "materials_state": {},
+                "geometry_state": {},
+                "history": [],
+            }
+            dump_data(state_path, state)
+            flow = load_flow_definition(ROOT / "configs" / "flow.yaml", ROOT)
+            validate_flow(flow)
+            step = next(item for item in flow["steps"] if item["id"] == "S04")
+
+            step_input = build_step_input(
+                step,
+                flow,
+                params={},
+                state_in_path=state_path,
+                output_dir=root / "S04_sc_etch",
+                parameter_txt_paths={"global": params_path},
+            )
+
+            self.assertEqual(step_input["template_registry"], "configs/templates.yaml")
+            self.assertIn("template_specs", step_input)
+            self.assertIn("rve_inputs", step_input)
+            self.assertIn("runs", step_input)
+            self.assertIn("onon", step_input["rve_inputs"])
+            self.assertEqual(len([key for key in step_input["rve_inputs"] if key == "pillar"]), 1)
+
+            runs = {run["node"]: run for run in step_input["runs"]}
+            self.assertEqual(runs["fecap"]["inputs"], {"pillar": "pillar", "sc": "sc", "onon": "onon"})
+            self.assertEqual(
+                runs["die"]["inputs"],
+                {"decap1": "decap1", "decap2": "decap2", "decap3": "decap3", "fecap": "fecap", "onon": "onon"},
+            )
+            self.assertEqual(runs["wafer"]["inputs"], {"die": "die", "onon": "onon"})
+            self.assertNotIn("target", json.dumps(step_input["runs"]))
+            self.assertNotIn("D_upper21", json.dumps(step_input["runs"]))
 
     def test_v2_flow_definition_loads_step_files_and_templates(self):
         from comsol_opt.flow_runner import load_flow_definition
@@ -121,6 +172,132 @@ class V2FlowTests(unittest.TestCase):
             self.assertEqual(flow["steps"][0]["id"], "S04")
             self.assertEqual(flow["steps"][0]["layout_version"], 2)
             self.assertIn("fecap_model_all", flow["steps"][0]["templates"]["templates"])
+
+    def test_v2_shorthand_step_expands_to_standard_nodes(self):
+        from comsol_opt.flow_runner import load_flow_definition
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "configs" / "steps").mkdir(parents=True)
+            (root / "configs" / "params").mkdir(parents=True)
+            (root / "configs" / "params" / "global.txt").write_text("sigma_O_base 100[MPa]\n", encoding="utf-8")
+            dump_data(root / "configs" / "templates.yaml", minimal_v2_flow_and_step()[0]["templates"])
+            dump_data(
+                root / "configs" / "steps" / "S04_sc_etch.yaml",
+                {
+                    "step_id": "S04",
+                    "step_name": "sc_etch",
+                    "run": {"sc": "sc_model", "fecap": "fecap_model_all"},
+                },
+            )
+            dump_data(
+                root / "configs" / "flow.yaml",
+                {
+                    "version": 2,
+                    "templates": "configs/templates.yaml",
+                    "parameter_txt_order": ["configs/params/global.txt"],
+                    "steps": ["configs/steps/S04_sc_etch.yaml"],
+                },
+            )
+
+            flow = load_flow_definition(root / "configs" / "flow.yaml", root)
+            nodes = flow["steps"][0]["nodes"]
+
+            self.assertNotIn("pillar", nodes)
+            self.assertEqual(nodes["sc"], {"action": "run", "template": "sc_model"})
+            self.assertEqual(nodes["fecap"]["template"], "fecap_model_all")
+            self.assertEqual(nodes["fecap"]["inputs"], {"pillar": {"ref": "rve.pillar"}, "sc": {"ref": "rve.sc"}, "onon": {"ref": "rve.onon"}})
+            self.assertEqual(nodes["die"]["action"], "run")
+            self.assertEqual(nodes["die"]["inputs"]["onon"], {"ref": "rve.onon"})
+            self.assertEqual(nodes["wafer"]["inputs"], {"die": {"ref": "rve.die"}, "onon": {"ref": "rve.onon"}})
+
+    def test_v2_shorthand_supports_decap_group_and_full_chain_preset(self):
+        from comsol_opt.flow_runner import load_flow_definition
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "configs" / "steps").mkdir(parents=True)
+            (root / "configs" / "params").mkdir(parents=True)
+            (root / "configs" / "params" / "global.txt").write_text("sigma_O_base 100[MPa]\n", encoding="utf-8")
+            dump_data(root / "configs" / "templates.yaml", minimal_v2_flow_and_step()[0]["templates"])
+            dump_data(
+                root / "configs" / "steps" / "S06.yaml",
+                {
+                    "step_id": "S06",
+                    "step_name": "pillar_etch",
+                    "preset": "full_chain",
+                    "run": {"pillar": "pillar_model", "decap": "decap_model"},
+                },
+            )
+            dump_data(
+                root / "configs" / "flow.yaml",
+                {
+                    "version": 2,
+                    "templates": "configs/templates.yaml",
+                    "parameter_txt_order": ["configs/params/global.txt"],
+                    "steps": ["configs/steps/S06.yaml"],
+                },
+            )
+
+            flow = load_flow_definition(root / "configs" / "flow.yaml", root)
+            nodes = flow["steps"][0]["nodes"]
+
+            self.assertEqual(nodes["decap1"]["template"], "decap_model_decap1")
+            self.assertEqual(nodes["decap2"]["template"], "decap_model_decap2")
+            self.assertEqual(nodes["decap3"]["template"], "decap_model_decap3")
+            self.assertEqual(nodes["fecap"]["template"], "fecap_model_all")
+            self.assertEqual(nodes["die"]["action"], "run")
+            self.assertEqual(nodes["wafer"]["action"], "run")
+
+    def test_v2_template_families_expand_to_template_registry(self):
+        from comsol_opt.flow_runner import load_flow_definition
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "configs" / "steps").mkdir(parents=True)
+            (root / "configs" / "params").mkdir(parents=True)
+            (root / "configs" / "params" / "global.txt").write_text("sigma_O_base 100[MPa]\n", encoding="utf-8")
+            flow, step = minimal_v2_flow_and_step()
+            registry = dict(flow["templates"])
+            registry["template_families"] = {
+                "decap_model": {
+                    "base": {
+                        "path": "models/process_models/cap_models/decap_model_all.mph",
+                        "studies": {"stress": "std0", "cp": "cp0"},
+                        "extractors": {"rho": "rho", "stress": "stress", "D": "D"},
+                    },
+                    "members": {
+                        "decap1": {"component": "comp6", "physics": "solid6", "studies": {"stress": "std3", "cp": "solid6cp1std"}},
+                        "decap2": {"component": "comp5", "physics": "solid5", "studies": {"stress": "std1", "cp": "solid5cp1std"}},
+                        "decap3": {"component": "comp7", "physics": "solid4", "studies": {"stress": "std2", "cp": "solid4cp1std"}},
+                    },
+                    "input_target_slots": ["pillar", "onon"],
+                }
+            }
+            registry["templates"] = {
+                key: value
+                for key, value in registry["templates"].items()
+                if not key.startswith("decap_model_decap")
+            }
+            dump_data(root / "configs" / "templates.yaml", registry)
+            dump_data(root / "configs" / "steps" / "S05.yaml", {"step_id": "S05", "step_name": "sc_asi_etch", "run": {"decap": "decap_model"}})
+            dump_data(
+                root / "configs" / "flow.yaml",
+                {
+                    "version": 2,
+                    "templates": "configs/templates.yaml",
+                    "parameter_txt_order": ["configs/params/global.txt"],
+                    "steps": ["configs/steps/S05.yaml"],
+                },
+            )
+
+            loaded = load_flow_definition(root / "configs" / "flow.yaml", root)
+            templates = loaded["templates"]["templates"]
+
+            self.assertEqual(templates["decap_model_decap1"]["node_type"], "decap1")
+            self.assertEqual(templates["decap_model_decap2"]["component"], "comp5")
+            self.assertEqual(templates["decap_model_decap3"]["input_targets"]["onon"]["stress"]["physics"], "solid4")
+            self.assertEqual(loaded["steps"][0]["nodes"]["decap2"]["template"], "decap_model_decap2")
 
 
 class V2MockFlowTests(unittest.TestCase):
@@ -169,9 +346,15 @@ class V2MockFlowTests(unittest.TestCase):
             self.assertIn("node=sc action=run template=sc_model", log_text)
             self.assertIn("node=fecap action=run template=fecap_model_all", log_text)
             self.assertIn("input slot=sc source=rve.sc source_step=S04", log_text)
-            self.assertIn("material component=comp8 tag=mat_pillar_eff", log_text)
+            self.assertIn("material component=comp8 tag=TODO_FECAP_PILLAR_MATERIAL_TAG", log_text)
             self.assertIn("stress type=initial_stress component=comp8 physics=solid8", log_text)
             self.assertIn("wafer bow_x_um=", log_text)
+            interface_log = load_json(s04_dir / "logs" / "interface.json")
+            self.assertEqual(interface_log["step_id"], "S04")
+            self.assertEqual(interface_log["runs"][1]["node"], "fecap")
+            self.assertEqual(interface_log["runs"][1]["inputs"]["pillar"]["source"], "rve.pillar")
+            self.assertEqual(interface_log["runs"][1]["inputs"]["pillar"]["target"]["material"]["component"], "comp8")
+            self.assertEqual(interface_log["runs"][-1]["outputs"]["result_file"], "wafer_result.json")
 
     def test_v2_mock_stress_only_node_inherits_previous_D(self):
         from comsol_opt.mock_comsol_worker import run_mock_step
@@ -281,6 +464,33 @@ class V2MockFlowTests(unittest.TestCase):
             self.assertIn("command=", log_text)
             self.assertIn("worker_status=success", log_text)
 
+    def test_comsol_backend_rejects_unresolved_todo_tags(self):
+        from comsol_opt.backends import ComsolBackend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worker = root / "worker.py"
+            worker.write_text("raise SystemExit('should not run')\n", encoding="utf-8")
+            state = root / "state.json"
+            dump_data(state, {"step_id": "INIT", "step_name": "initial", "wafer_result": {}, "rve": {}, "materials_state": {}, "geometry_state": {}, "history": []})
+            step_input = root / "S04" / "step_input.json"
+            dump_data(
+                step_input,
+                {
+                    "step_id": "S04",
+                    "step_name": "sc_etch",
+                    "output_dir": str(root / "S04"),
+                    "state_in": str(state),
+                    "nodes": [{"node": "sc", "component": "TODO_SC_COMPONENT"}],
+                },
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unresolved TODO tags"):
+                ComsolBackend([sys.executable, str(worker)]).run_step(step_input)
+
+            log_text = (root / "S04" / "logs" / "step.log").read_text(encoding="utf-8")
+            self.assertIn("worker_status=blocked unresolved_tags=", log_text)
+
 
 class ParameterTxtSetTests(unittest.TestCase):
     def test_updates_struct_stress_and_temp_parameter_files(self):
@@ -344,6 +554,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             ]
             completed = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=True)
             self.assertIn("Completed 20 steps", completed.stdout)
+            self.assertIn("Latest step log:", completed.stdout)
 
             run_dir = run_root / "v2_mock_test"
             self.assertTrue((run_dir / "S20" / "logs" / "step.log").exists())
@@ -745,11 +956,11 @@ def minimal_v2_flow_and_step():
     target = {
         "material": {
             "component": "comp8",
-            "tag": "mat_pillar_eff",
+            "tag": "TODO_FECAP_PILLAR_MATERIAL_TAG",
             "density_group": "def",
             "density_property": "density",
-            "elastic_group": "anisotropic_eff",
-            "elastic_property": "D",
+            "elastic_group": "TODO_FECAP_PILLAR_ELASTIC_GROUP",
+            "elastic_property": "TODO_FECAP_PILLAR_ELASTIC_PROPERTY",
             "elasticity_order": "standard",
             "D_format": "symmetric_upper21",
         },
@@ -757,8 +968,8 @@ def minimal_v2_flow_and_step():
             "type": "initial_stress",
             "component": "comp8",
             "physics": "solid8",
-            "parent_feature": "lemm1",
-            "feature": "initstress_pillar",
+            "parent_feature": "TODO_FECAP_PILLAR_STRESS_PARENT",
+            "feature": "TODO_FECAP_PILLAR_STRESS_FEATURE",
             "property": "S0",
             "stress_format": "diag_sxx_syy",
         },

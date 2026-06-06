@@ -36,6 +36,9 @@ def main():
         parameter_map_path=args.parameter_map,
     )
     print(f"Completed {result['completed']} steps in {result['run_dir']}")
+    latest_log = Path(result["run_dir"]) / f"S{result['completed']:02d}" / "logs" / "step.log"
+    if latest_log.exists():
+        print(f"Latest step log: {latest_log}")
 
 
 if __name__ == "__main__":

@@ -150,13 +150,19 @@ def run_mock_v2_step(step_input, state_out, state_in):
         f"output_dir={output_dir}",
         "node_order=" + ",".join(node["node"] for node in step_input["nodes"]),
     ]
+    interface_log = {
+        "step_id": step_input["step_id"],
+        "step_name": step_input["step_name"],
+        "template_registry": step_input.get("template_registry", ""),
+        "runs": [],
+    }
 
     for node in step_input["nodes"]:
         node_id = node["node"]
         action = node["action"]
         entry = {"action": action}
         log_lines.append(
-            f"node={node_id} action={action} template={node.get('template', '')} model_path={node.get('model_path', node.get('template_path', ''))}"
+            f"node={node_id} action={action} template={node.get('template', '')} model_path={_v2_model_path(step_input, node)}"
         )
         if action == "inherit":
             inherited = state_out["rve"].get(node_id)
@@ -181,7 +187,8 @@ def run_mock_v2_step(step_input, state_out, state_in):
             raise ValueError(f"{step_input['step_id']} node {node_id} has unknown action {action}")
 
         if node_id == "wafer":
-            log_lines.extend(_v2_input_log_lines(node, state_out))
+            log_lines.extend(_v2_input_log_lines(node, state_out, step_input))
+            interface_log["runs"].append(_v2_interface_run(node, state_out, step_input))
             wafer_result = mock_v2_wafer_result(state_out, node)
             state_out["wafer_result"] = wafer_result
             append_history(state_out, step_input["step_id"], step_input["step_name"], wafer_result)
@@ -193,7 +200,8 @@ def run_mock_v2_step(step_input, state_out, state_in):
             manifest["nodes"][node_id] = entry
             continue
 
-        log_lines.extend(_v2_input_log_lines(node, state_out))
+        log_lines.extend(_v2_input_log_lines(node, state_out, step_input))
+        interface_log["runs"].append(_v2_interface_run(node, state_out, step_input))
         inputs = _resolve_v2_inputs(state_out, node)
         rve = mock_v2_rve(node, inputs, step_input)
         if node.get("studies", {}).get("cp") is None and node.get("merge", {}).get("D") == "inherit_previous":
@@ -224,6 +232,7 @@ def run_mock_v2_step(step_input, state_out, state_in):
     dump_data(output_dir / "manifest.json", manifest)
     dump_data(output_dir / "state_out.json", state_out)
     _write_step_log(output_dir, log_lines)
+    _write_interface_log(output_dir, interface_log)
     result = {"status": "success", "step_id": step_input["step_id"], "wafer_result": wafer_result, "wafer_skipped": False}
     dump_data(output_dir / "step_result.json", result)
     return result
@@ -236,10 +245,10 @@ def _is_v2_step(step_input):
 def _resolve_v2_inputs(state, node):
     inputs = {}
     for slot, input_cfg in node.get("inputs", {}).items():
-        source = canonical_ref_name(input_cfg["source"])
+        source = _v2_input_source_name(input_cfg)
         rve = state["rve"][source]
         if not rve.get("valid"):
-            raise RuntimeError(f"requires valid input {input_cfg['source']}")
+            raise RuntimeError(f"requires valid input rve.{source}")
         inputs[slot] = rve
     return inputs
 
@@ -278,22 +287,32 @@ def mock_v2_rve(node, inputs, step_input):
 def mock_v2_wafer_result(state, node):
     if "die" not in node.get("inputs", {}) or "onon" not in node.get("inputs", {}):
         return {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0}
-    die = state["rve"][canonical_ref_name(node["inputs"]["die"]["source"])]
-    onon = state["rve"][canonical_ref_name(node["inputs"]["onon"]["source"])]
+    die = state["rve"][_v2_input_source_name(node["inputs"]["die"])]
+    onon = state["rve"][_v2_input_source_name(node["inputs"]["onon"])]
     bow_x = 0.7 * die["stress_eff"]["sxx"] / 1e6 + 0.3 * onon["stress_eff"]["sxx"] / 1e6
     bow_y = 0.7 * die["stress_eff"]["syy"] / 1e6 + 0.3 * onon["stress_eff"]["syy"] / 1e6
     return {"bow_x_um": 0.8 * bow_x, "bow_y_um": 0.75 * bow_y, "kx": bow_x * 1e-5, "ky": bow_y * 1e-5}
 
 
-def _v2_input_log_lines(node, state):
+def _v2_input_log_lines(node, state, step_input=None):
     lines = []
     for slot, input_cfg in node.get("inputs", {}).items():
-        source = canonical_ref_name(input_cfg["source"])
+        source = _v2_input_source_name(input_cfg)
         rve = state["rve"][source]
+        source_ref = f"rve.{source}"
+        if isinstance(input_cfg, dict):
+            source_ref = input_cfg.get("source") or input_cfg.get("ref") or source_ref
         lines.append(
-            f"input slot={slot} source={input_cfg['source']} source_step={rve.get('source_step')} source_node={rve.get('source_node', source)}"
+            f"input slot={slot} source={source_ref} source_step={rve.get('source_step')} source_node={rve.get('source_node', source)}"
         )
-        target = input_cfg.get("target", {})
+        target = input_cfg.get("target", {}) if isinstance(input_cfg, dict) else {}
+        if not target and step_input is not None:
+            target = (
+                step_input.get("template_specs", {})
+                .get(node.get("template", ""), {})
+                .get("input_targets", {})
+                .get(slot, {})
+            )
         material = target.get("material", {})
         if material:
             lines.append(
@@ -322,6 +341,49 @@ def _v2_input_log_lines(node, state):
     return lines
 
 
+def _v2_interface_run(node, state, step_input):
+    template = step_input.get("template_specs", {}).get(node.get("template", ""), {})
+    inputs = {}
+    for slot, input_cfg in node.get("inputs", {}).items():
+        source = _v2_input_source_name(input_cfg)
+        rve = state["rve"][source]
+        target = input_cfg.get("target", {}) if isinstance(input_cfg, dict) else {}
+        if not target:
+            target = template.get("input_targets", {}).get(slot, {})
+        inputs[slot] = {
+            "source": f"rve.{source}",
+            "source_step": rve.get("source_step"),
+            "source_node": rve.get("source_node", source),
+            "target": target,
+        }
+    return {
+        "node": node["node"],
+        "template": node.get("template"),
+        "model_path": _v2_model_path(step_input, node),
+        "studies": template.get("studies", node.get("studies", {})),
+        "extractors": template.get("extractors", node.get("extractors", {})),
+        "inputs": inputs,
+        "outputs": {"result_file": node.get("result_file")},
+    }
+
+
+def _v2_model_path(step_input, node):
+    if node.get("model_path") or node.get("template_path"):
+        return node.get("model_path", node.get("template_path", ""))
+    return step_input.get("template_specs", {}).get(node.get("template", ""), {}).get("path", "")
+
+
+def _v2_input_source_name(input_cfg):
+    if isinstance(input_cfg, str):
+        return input_cfg
+    source = input_cfg.get("source") or input_cfg.get("ref")
+    if source and source.startswith("rve."):
+        return canonical_ref_name(source)
+    if source:
+        return source
+    raise ValueError(f"Unsupported v2 input: {input_cfg}")
+
+
 def _v2_rve_log_line(event, node_id, rve):
     return (
         f"rve event={event} node={node_id} status={rve.get('status', '')} "
@@ -343,6 +405,10 @@ def _write_step_log(output_dir, lines):
     log_dir = Path(output_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "step.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_interface_log(output_dir, interface_log):
+    dump_data(Path(output_dir) / "logs" / "interface.json", interface_log)
 
 
 def _write_node_result(output_dir, node, result):

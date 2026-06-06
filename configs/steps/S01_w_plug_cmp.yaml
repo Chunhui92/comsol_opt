@@ -1,6 +1,4 @@
 step_id: S01
 step_name: w_plug_cmp
-nodes:
-  wafer:
-    action: run
-    template: p01_wafer_init
+run:
+  wafer: p01_wafer_init

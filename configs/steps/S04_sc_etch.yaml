@@ -1,14 +1,5 @@
 step_id: S04
 step_name: sc_etch
-nodes:
-  pillar: {action: inherit}
-  sc: {action: run, template: sc_model}
-  decap1: {action: inherit}
-  decap2: {action: inherit}
-  decap3: {action: inherit}
-  fecap: {action: run, template: fecap_model, inputs: {pillar: {ref: rve.pillar}, sc: {ref: rve.sc}}}
-  die:
-    action: run
-    template: die_model
-    inputs: {decap1: {ref: rve.decap1}, decap2: {ref: rve.decap2}, decap3: {ref: rve.decap3}, fecap: {ref: rve.fecap}}
-  wafer: {action: run, template: wafer_warp_model, inputs: {die: {ref: rve.die}, onon: {ref: rve.onon}}}
+run:
+  sc: p03_SC_form
+  fecap: fecap_model_all
