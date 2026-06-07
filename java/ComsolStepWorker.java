@@ -280,8 +280,6 @@ public class ComsolStepWorker {
         state.append("  \"step_id\": ").append(json(input.stepId)).append(",\n");
         state.append("  \"step_name\": ").append(json(input.stepName)).append(",\n");
         state.append("  \"rve\": ").append(rveMapToJson(rves)).append(",\n");
-        state.append("  \"device_rves\": ").append(deviceRvesToJson(rves)).append(",\n");
-        state.append("  \"wafer_inputs\": ").append(waferInputsToJson(rves, stateInText)).append(",\n");
         state.append("  \"wafer_result\": ").append(wafer.toJson()).append(",\n");
         state.append("  \"materials_state\": ").append(objectJsonOrEmpty(stateInText, "materials_state")).append(",\n");
         state.append("  \"geometry_state\": ").append(objectJsonOrEmpty(stateInText, "geometry_state")).append(",\n");
@@ -329,54 +327,6 @@ public class ComsolStepWorker {
             json.append("\n    ").append(json(entry.getKey())).append(": ").append(entry.getValue().toJson());
         }
         if (!values.isEmpty()) {
-            json.append("\n  ");
-        }
-        json.append("}");
-        return json.toString();
-    }
-
-    private static String deviceRvesToJson(Map<String, RveResult> rves) {
-        StringBuilder json = new StringBuilder("{");
-        int index = 0;
-        if (rves.containsKey("device_main")) {
-            json.append("\n    \"device_default\": ").append(rves.get("device_main").toJson());
-            index++;
-        }
-        if (rves.containsKey("device_aux")) {
-            if (index++ > 0) {
-                json.append(",");
-            }
-            json.append("\n    \"device2_for_mat3\": ").append(rves.get("device_aux").toJson());
-        }
-        if (index > 0) {
-            json.append("\n  ");
-        }
-        json.append("}");
-        return json.toString();
-    }
-
-    private static String waferInputsToJson(Map<String, RveResult> rves, String stateInText) {
-        String previous = objectText(stateInText, "wafer_inputs");
-        Map<String, String> directInputs = rawTopLevelObjects(previous);
-        StringBuilder json = new StringBuilder("{");
-        int index = 0;
-        for (Map.Entry<String, String> entry : directInputs.entrySet()) {
-            if (index++ > 0) {
-                json.append(",");
-            }
-            json.append("\n    ").append(json(entry.getKey())).append(": ").append(entry.getValue());
-        }
-        for (String key : new String[] {"mat1", "mat2", "mat3", "mat4", "die"}) {
-            RveResult rve = rves.get(key);
-            if (rve == null) {
-                continue;
-            }
-            if (index++ > 0) {
-                json.append(",");
-            }
-            json.append("\n    ").append(json(key)).append(": ").append(rve.toJson());
-        }
-        if (index > 0) {
             json.append("\n  ");
         }
         json.append("}");

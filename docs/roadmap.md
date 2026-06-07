@@ -20,8 +20,10 @@ This file tracks the next workflow improvements after the v2 20-step Python/mock
 - `java/ComsolStepWorker.java` has a first-pass expanded-input skeleton with `MaterialTarget`, `StressTarget`, `D_upper21`, and material/stress application helpers.
 - Stage/global calibration use shared cache directories instead of per-trial flow caches.
 - COMSOL-style parameter TXT files under `configs/params/` are merged in global, step, calibration override order.
+- Calibration trials now stage trial-specific `configs/params/calibration_override.txt` files so YAML trial parameters also reach COMSOL through the active TXT stack.
 - Step cache keys include staged parameter TXT content hashes.
 - Default calibration filters `configs/calibration_space.yaml` to groups whose `target_step` is enabled in the active flow.
+- `calibration_optuna.py` accepts `--comsol-command` and passes it through staged/global calibration into `make_backend`.
 - `configs/` now contains the active v2 scheme; old nominal YAML, tag, three-file TXT configs, and seed step configs are archived under `archive/legacy_config_scheme/`.
 - Old local step parameter TXT files and superseded implementation notes were moved out of the active config/docs paths into `archive/legacy_config_scheme/params/` and `archive/project_notes/`.
 - `README.md` is the single active project overview. Older planning/spec documents are archived under `archive/project_notes/`.
@@ -35,17 +37,14 @@ This file tracks the next workflow improvements after the v2 20-step Python/mock
 2. Finish Java worker parsing and execution hardening.
    Replace the regex JSON parser with a real JSON helper or generated parser, compile against COMSOL 6.3, and verify `S0`, `D`, and `DV0` ordering against exported model Java.
 
-3. Add COMSOL command plumbing to calibration.
-   `run_flow.py` already accepts `--comsol-command`, but `calibration_optuna.py` does not. Add the CLI flag and pass it through staged/global calibration into `make_backend`.
-
-4. Replace provisional v2 process model paths.
+3. Replace provisional v2 process model paths.
    The current v2 step configs express the 20-step DAG and logging contract, but several template paths are placeholders until real `.mph` files and tags are confirmed.
 
-5. Add start/stop checkpointed staged reruns.
+4. Add start/stop checkpointed staged reruns.
    Staged calibration should eventually start each stage from the previous stage's best checkpoint and stop at the stage target step. That will avoid rerunning S00-to-target for every trial.
 
-6. Add Java worker execution coverage.
+5. Add Java worker execution coverage.
    Current tests inspect the worker contract text because the local machine does not have a Java runtime or COMSOL API. Add a compile/runtime harness with COMSOL stubs or a small parser test once CI has a Java runtime.
 
-7. Persist calibration metadata.
+6. Persist calibration metadata.
    Add an optimizer metadata file per stage with sampler name, seed, bounds, selected parameters, cache path, and code/config hash.

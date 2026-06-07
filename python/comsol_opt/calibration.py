@@ -12,6 +12,27 @@ from .loss import compute_loss_from_rows, load_summary_rows
 from .params import copy_params, flatten_params, set_param
 
 
+CALIBRATION_TXT_NAMES = {
+    "FEOL.sigma_init_x": "sigma_FEOL_x",
+    "FEOL.sigma_init_y": "sigma_FEOL_y",
+    "ONON.sigma_O_base": "sigma_O_base",
+    "ONON.sigma_N_base": "sigma_N_base",
+    "release.trench_etch_ONON": "r_ONON_trench",
+    "release.dpillar_form_ONON": "r_ONON_dpillar",
+    "release.mat_remove_ONON": "r_ONON_remove",
+    "release.final_ONON": "r_ONON_final",
+    "Ox.sigma_trench_fill": "sigma_Ox_fill",
+    "geometry.pillar_diameter": "pillar_diameter",
+    "pillar_dep.dep1.sigma_init": "sigma_dep1",
+    "pillar_dep.dep2.sigma_init": "sigma_dep2",
+    "pillar_dep.dep3.sigma_init": "sigma_dep3",
+    "pillar_dep.dep4.sigma_init": "sigma_dep4",
+    "pillar_dep.dep5.sigma_init": "sigma_dep5",
+    "aSi.sigma": "sigma_aSi",
+    "W.sigma_fill": "sigma_W_fill",
+}
+
+
 def all_parameter_specs(calibration_space):
     specs = []
     for group in calibration_space["groups"]:
@@ -149,6 +170,7 @@ def run_staged_calibration(
     seed=17,
     stages=None,
     optimizer="auto",
+    comsol_command=None,
 ):
     base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
@@ -200,6 +222,7 @@ def run_staged_calibration(
                 target_step,
                 stage_dir,
                 lambda_reg,
+                comsol_command,
             )
         else:
             stage_result = _run_random_stage(
@@ -215,6 +238,7 @@ def run_staged_calibration(
                 target_step,
                 stage_dir,
                 lambda_reg,
+                comsol_command,
             )
 
         current_params = stage_result["params"]
@@ -232,7 +256,21 @@ def run_staged_calibration(
     return {"calib_dir": calib_dir, "completed_stages": len(groups), "final_params": current_params}
 
 
-def _run_random_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir, lambda_reg=0.0):
+def _run_random_stage(
+    current_params,
+    specs,
+    flow_path,
+    experiment_path,
+    backend_name,
+    repo_root,
+    trials_root,
+    n_trials,
+    seed,
+    target_step,
+    stage_dir,
+    lambda_reg=0.0,
+    comsol_command=None,
+):
     best = None
     history = []
     for trial_index in range(n_trials):
@@ -250,6 +288,7 @@ def _run_random_stage(current_params, specs, flow_path, experiment_path, backend
             specs,
             lambda_reg,
             "random",
+            comsol_command,
         )
         history.append(trial_result["record"])
         if best is None or trial_result["loss"] < best["loss"]:
@@ -258,7 +297,21 @@ def _run_random_stage(current_params, specs, flow_path, experiment_path, backend
     return best
 
 
-def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend_name, repo_root, trials_root, n_trials, seed, target_step, stage_dir, lambda_reg=0.0):
+def _run_optuna_stage(
+    current_params,
+    specs,
+    flow_path,
+    experiment_path,
+    backend_name,
+    repo_root,
+    trials_root,
+    n_trials,
+    seed,
+    target_step,
+    stage_dir,
+    lambda_reg=0.0,
+    comsol_command=None,
+):
     try:
         import optuna  # type: ignore
     except ModuleNotFoundError:
@@ -275,6 +328,7 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
             target_step,
             stage_dir,
             lambda_reg,
+            comsol_command,
         )
 
     best = None
@@ -299,6 +353,7 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
             specs,
             lambda_reg,
             "optuna",
+            comsol_command,
         )
         history.append(trial_result["record"])
         if best is None or trial_result["loss"] < best["loss"]:
@@ -314,19 +369,40 @@ def _run_optuna_stage(current_params, specs, flow_path, experiment_path, backend
     return best
 
 
-def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_name, repo_root, trials_root, target_step, stage_dir, specs, lambda_reg, optimizer_name):
+def _run_stage_trial(
+    params,
+    trial_index,
+    flow_path,
+    experiment_path,
+    backend_name,
+    repo_root,
+    trials_root,
+    target_step,
+    stage_dir,
+    specs,
+    lambda_reg,
+    optimizer_name,
+    comsol_command=None,
+):
     trial_dir = trials_root / f"trial_{trial_index:04d}"
     trial_dir.mkdir(parents=True, exist_ok=True)
     params_file = trial_dir / "params_trial.yaml"
     dump_data(params_file, params)
+    trial_repo_root, trial_flow_path = prepare_trial_flow_workspace(
+        trial_dir,
+        flow_path,
+        repo_root,
+        params,
+        specs,
+    )
     result = run_flow(
-        flow_path=flow_path,
+        flow_path=trial_flow_path,
         params_path=params_file,
         experiment_path=experiment_path,
-        backend=make_backend(backend_name),
+        backend=make_backend(backend_name, comsol_command),
         run_id="flow",
         runs_root=trial_dir,
-        repo_root=repo_root,
+        repo_root=trial_repo_root,
         use_cache=True,
         parameter_map_path=None,
         cache_root=stage_dir / ".cache",
@@ -349,7 +425,19 @@ def _run_stage_trial(params, trial_index, flow_path, experiment_path, backend_na
     return {"loss": loss, "params": params, "summary": summary_path, "trial": trial_index, "record": record}
 
 
-def run_quick_calibration(flow_path, params_path, calibration_space_path, experiment_path, backend_name, run_id, runs_root, repo_root, n_trials, seed=17):
+def run_quick_calibration(
+    flow_path,
+    params_path,
+    calibration_space_path,
+    experiment_path,
+    backend_name,
+    run_id,
+    runs_root,
+    repo_root,
+    n_trials,
+    seed=17,
+    comsol_command=None,
+):
     base_params = load_base_params(params_path, flow_path, repo_root)
     calibration_space = load_config(calibration_space_path)
     lambda_reg = regularization_weight(calibration_space)
@@ -367,15 +455,22 @@ def run_quick_calibration(flow_path, params_path, calibration_space_path, experi
         trial_dir.mkdir(parents=True, exist_ok=True)
         params_file = trial_dir / "params_trial.yaml"
         dump_data(params_file, params)
-        backend = make_backend(backend_name)
+        trial_repo_root, trial_flow_path = prepare_trial_flow_workspace(
+            trial_dir,
+            flow_path,
+            repo_root,
+            params,
+            specs,
+        )
+        backend = make_backend(backend_name, comsol_command)
         result = run_flow(
-            flow_path=flow_path,
+            flow_path=trial_flow_path,
             params_path=params_file,
             experiment_path=experiment_path,
             backend=backend,
             run_id="flow",
             runs_root=trial_dir,
-            repo_root=repo_root,
+            repo_root=trial_repo_root,
             use_cache=True,
             parameter_map_path=None,
             cache_root=calib_dir / ".cache",
@@ -413,6 +508,7 @@ def run_optuna_or_fallback_calibration(
     repo_root,
     n_trials,
     seed=17,
+    comsol_command=None,
 ):
     try:
         import optuna  # type: ignore
@@ -428,6 +524,7 @@ def run_optuna_or_fallback_calibration(
             repo_root,
             n_trials,
             seed,
+            comsol_command,
         )
 
     base_params = load_base_params(params_path, flow_path, repo_root)
@@ -451,14 +548,21 @@ def run_optuna_or_fallback_calibration(
         trial_dir.mkdir(parents=True, exist_ok=True)
         params_file = trial_dir / "params_trial.yaml"
         dump_data(params_file, params)
+        trial_repo_root, trial_flow_path = prepare_trial_flow_workspace(
+            trial_dir,
+            flow_path,
+            repo_root,
+            params,
+            specs,
+        )
         result = run_flow(
-            flow_path=flow_path,
+            flow_path=trial_flow_path,
             params_path=params_file,
             experiment_path=experiment_path,
-            backend=make_backend(backend_name),
+            backend=make_backend(backend_name, comsol_command),
             run_id="flow",
             runs_root=trial_dir,
-            repo_root=repo_root,
+            repo_root=trial_repo_root,
             use_cache=True,
             parameter_map_path=None,
             cache_root=calib_dir / ".cache",
@@ -490,6 +594,40 @@ def run_optuna_or_fallback_calibration(
     dump_data(calib_dir / "best_params.yaml", best["params"])
     shutil.copyfile(best["summary"], calib_dir / "best_summary.csv")
     return {"calib_dir": calib_dir, "best_loss": best["loss"], "best_trial": best["trial"]}
+
+
+def prepare_trial_flow_workspace(trial_dir, flow_path, repo_root, params, specs):
+    trial_dir = Path(trial_dir)
+    repo_root = Path(repo_root)
+    flow_path = Path(flow_path)
+    trial_repo_root = trial_dir / "repo"
+    trial_configs = trial_repo_root / "configs"
+    if trial_configs.exists():
+        shutil.rmtree(trial_configs)
+    shutil.copytree(repo_root / "configs", trial_configs)
+    override_path = trial_configs / "params" / "calibration_override.txt"
+    override_path.write_text(calibration_override_txt(params, specs), encoding="utf-8")
+    relative_flow = flow_path.relative_to(repo_root)
+    return trial_repo_root, trial_repo_root / relative_flow
+
+
+def calibration_override_txt(params, specs):
+    flat = flatten_params(params)
+    units = {spec["key"]: spec.get("unit", "") for spec in specs}
+    lines = [
+        "# Calibration override parameters",
+        "# Generated by comsol_opt calibration.",
+        "# Later values override global/step params.",
+        "",
+    ]
+    for dotted_key in sorted(flat):
+        txt_name = CALIBRATION_TXT_NAMES.get(dotted_key)
+        if txt_name is None:
+            continue
+        unit = units.get(dotted_key, "")
+        suffix = f"[{unit}]" if unit and unit != "ratio" else ""
+        lines.append(f"{txt_name}\t{flat[dotted_key]}{suffix}\t{dotted_key}")
+    return "\n".join(lines) + "\n"
 
 
 def _write_history(path, history):

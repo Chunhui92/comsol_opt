@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -698,6 +699,62 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertTrue((calib_dir / "calibration_history.csv").exists())
             self.assertTrue((calib_dir / "best_params.yaml").exists())
             self.assertTrue((calib_dir / "best_summary.csv").exists())
+            trial_params = load_config(calib_dir / "trials" / "trial_0001" / "params_trial.yaml")
+            override_text = (
+                calib_dir
+                / "trials"
+                / "trial_0001"
+                / "flow"
+                / "S01"
+                / "parameters"
+                / "calibration_override.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn(f"sigma_O_base\t{trial_params['ONON']['sigma_O_base']}[Pa]", override_text)
+            self.assertIn(f"r_ONON_final\t{trial_params['release']['final_ONON']}", override_text)
+
+    def test_calibration_passes_comsol_command_to_backend(self):
+        from comsol_opt.calibration import run_quick_calibration
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_run_flow(**kwargs):
+                run_dir = root / "runs" / "comsol_calib" / "trials" / "trial_0000" / "flow"
+                run_dir.mkdir(parents=True, exist_ok=True)
+                with (run_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.DictWriter(
+                        handle,
+                        fieldnames=["step_id", "bow_x_um", "bow_y_um", "exp_bow_x_um", "exp_bow_y_um"],
+                    )
+                    writer.writeheader()
+                    writer.writerow(
+                        {
+                            "step_id": "S01",
+                            "bow_x_um": "0",
+                            "bow_y_um": "0",
+                            "exp_bow_x_um": "0",
+                            "exp_bow_y_um": "0",
+                        }
+                    )
+                return {"run_dir": run_dir, "completed": 20}
+
+            with patch("comsol_opt.calibration.make_backend") as make_backend, patch(
+                "comsol_opt.calibration.run_flow", side_effect=fake_run_flow
+            ):
+                make_backend.return_value = object()
+                run_quick_calibration(
+                    flow_path=ROOT / "configs" / "flow.yaml",
+                    params_path=None,
+                    calibration_space_path=ROOT / "configs" / "calibration_space.yaml",
+                    experiment_path=ROOT / "configs" / "experiments" / "bow_experiment.csv",
+                    backend_name="comsol",
+                    run_id="comsol_calib",
+                    runs_root=Path(tmp) / "runs",
+                    repo_root=ROOT,
+                    n_trials=1,
+                    comsol_command="echo comsol-worker",
+                )
+                make_backend.assert_called_once_with("comsol", "echo comsol-worker")
 
     def test_staged_calibration_writes_per_stage_outputs_and_carries_params(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -897,7 +954,6 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("\"rve\"", text)
         self.assertIn("materials_state", text)
         self.assertIn("historyJson", text)
-        self.assertIn("waferInputsToJson", text)
         self.assertIn("applyMaterialTarget", text)
         self.assertIn("applyStressTarget", text)
         self.assertIn("propertyGroup(elasticGroupTag)", text)
@@ -911,6 +967,8 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("target.stress", text)
         self.assertNotIn("input_%s_d11", text)
         self.assertNotIn("input_%s_d22", text)
+        for legacy_name in ("device_main", "device_aux", "onon_device", "mat1", "mat2", "mat3", "mat4"):
+            self.assertNotIn(legacy_name, text)
 
     def test_flow_responsibilities_are_split_into_focused_modules(self):
         import comsol_opt.flow_runner as flow_runner

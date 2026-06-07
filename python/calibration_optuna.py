@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--calibration-space", default=str(repo_root / "configs" / "calibration_space.yaml"))
     parser.add_argument("--experiment", default=str(repo_root / "configs" / "experiments" / "bow_experiment.csv"))
     parser.add_argument("--backend", choices=["mock", "comsol"], default="mock")
+    parser.add_argument("--comsol-command")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--runs-root", default=str(repo_root / "runs"))
     parser.add_argument("--n-trials", type=int, default=5)
@@ -43,6 +44,7 @@ def main():
             seed=args.seed,
             stages=args.stages,
             optimizer=args.optimizer,
+            comsol_command=args.comsol_command,
         )
         print(f"completed_stages={result['completed_stages']} dir={result['calib_dir']}")
     else:
@@ -58,6 +60,7 @@ def main():
             repo_root=repo_root,
             n_trials=args.n_trials,
             seed=args.seed,
+            comsol_command=args.comsol_command,
         )
         print(f"best_loss={result['best_loss']:.6g} best_trial={result['best_trial']} dir={result['calib_dir']}")
 
