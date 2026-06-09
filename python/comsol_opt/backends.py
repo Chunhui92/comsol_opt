@@ -30,7 +30,7 @@ class ComsolBackend(SimulationBackend):
         cmd = [*self.command, str(step_input_path)]
         step_input = load_json(step_input_path)
         output_dir = Path(step_input["output_dir"])
-        unresolved = find_unresolved_comsol_tags(step_input)
+        missing_parameter_txt = find_missing_parameter_txt(step_input)
         _append_step_log(
             output_dir,
             [
@@ -38,10 +38,10 @@ class ComsolBackend(SimulationBackend):
                 "command=" + " ".join(cmd),
             ],
         )
-        if unresolved:
-            _append_step_log(output_dir, ["worker_status=blocked unresolved_tags=" + ",".join(unresolved)])
+        if missing_parameter_txt:
+            _append_step_log(output_dir, ["worker_status=blocked missing_parameter_txt=" + ",".join(missing_parameter_txt)])
             raise RuntimeError(
-                "COMSOL backend has unresolved TODO tags in step_input.json: " + ", ".join(unresolved[:20])
+                "COMSOL backend has missing parameter txt files: " + ", ".join(missing_parameter_txt[:20])
             )
         try:
             subprocess.run(cmd, check=True)
@@ -72,14 +72,16 @@ def _append_step_log(output_dir, lines):
             handle.write(line + "\n")
 
 
-def find_unresolved_comsol_tags(value, path="$"):
-    unresolved = []
-    if isinstance(value, dict):
-        for key, item in value.items():
-            unresolved.extend(find_unresolved_comsol_tags(item, f"{path}.{key}"))
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            unresolved.extend(find_unresolved_comsol_tags(item, f"{path}[{index}]"))
-    elif isinstance(value, str) and value.startswith("TODO_"):
-        unresolved.append(f"{path}={value}")
-    return unresolved
+def find_missing_parameter_txt(step_input):
+    missing = []
+    produced = set()
+    for run in step_input.get("runs", []):
+        inputs = run.get("inputs", {})
+        for slot, path in run.get("input_parameter_txt_paths", {}).items():
+            source = inputs.get(slot, slot)
+            if source in produced:
+                continue
+            if not Path(path).exists():
+                missing.append(f"{run.get('node', '?')}.{slot}={path}")
+        produced.add(run.get("node"))
+    return missing

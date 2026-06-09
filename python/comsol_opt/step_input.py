@@ -1,13 +1,10 @@
+from pathlib import Path
+
 from .schemas import StepInput
-from .process import VALID_UPDATE_RULES
 from .config_io import load_json
 from .v2_contract import CANONICAL_NODE_SET, CHAIN_INPUTS, LEGACY_NODE_NAMES, RUN_ORDER, V2_ACTIONS
-from .v2_contract import canonical_ref_name, rve_payload_for_java
-
-
-VALID_DAG_NODE_TYPES = {"device", "mat", "die", "wafer"}
-VALID_DAG_ACTIONS = {"run", "inherit"}
-RVE_PREFIX = "rve."
+from .v2_contract import canonical_ref_name
+from .rve_txt import write_rve_parameter_txt
 
 
 def validate_flow(flow):
@@ -21,132 +18,7 @@ def validate_flow(flow):
             _validate_v2_step(step, flow)
         return
 
-    if flow.get("layout") == "layered_dag" or "global" in flow:
-        seen = set()
-        for step in flow["steps"]:
-            if not step.get("enabled", True):
-                continue
-            step_id = step["id"]
-            if step_id in seen:
-                raise ValueError(f"Duplicate step id: {step_id}")
-            seen.add(step_id)
-            if "config" not in step:
-                raise ValueError(f"{step_id} missing step config")
-            _validate_layered_step(step)
-        return
-
-    wafer_slots = set(flow["wafer_slots"])
-    device_templates = set(flow["templates"]["devices"])
-    mat_templates = set(flow["templates"]["mats"])
-    wafer_templates = set(flow["templates"]["wafers"])
-    seen = set()
-    for step in flow["steps"]:
-        step_id = step["id"]
-        if step_id in seen:
-            raise ValueError(f"Duplicate step id: {step_id}")
-        seen.add(step_id)
-        if step["update_rule"] not in VALID_UPDATE_RULES:
-            raise ValueError(f"{step_id} has unknown update rule {step['update_rule']}")
-        if step["wafer_template"] not in wafer_templates:
-            raise ValueError(f"{step_id} has unknown wafer template")
-        wafer_inputs = step["wafer_inputs"]
-        unknown_updates = set(wafer_inputs.get("update", [])) - wafer_slots
-        if unknown_updates:
-            raise ValueError(f"{step_id} updates unknown wafer slots: {sorted(unknown_updates)}")
-        unknown_inherits = set(wafer_inputs.get("inherit", [])) - wafer_slots
-        if unknown_inherits:
-            raise ValueError(f"{step_id} inherits unknown wafer slots: {sorted(unknown_inherits)}")
-        for dev_cfg in step.get("run_devices", []):
-            if dev_cfg["template_key"] not in device_templates:
-                raise ValueError(f"{step_id} has unknown device template {dev_cfg['template_key']}")
-        for mat_name in step.get("run_mats", []):
-            if mat_name not in mat_templates:
-                raise ValueError(f"{step_id} has unknown mat template {mat_name}")
-            if mat_name not in step.get("mat_inputs", {}):
-                raise ValueError(f"{step_id} missing mat input for {mat_name}")
-
-
-def _validate_layered_step(step):
-    step_id = step["id"]
-    if step["update_rule"] not in VALID_UPDATE_RULES:
-        raise ValueError(f"{step_id} has unknown update rule {step['update_rule']}")
-    nodes = step.get("nodes", [])
-    if not nodes:
-        raise ValueError(f"{step_id} has no DAG nodes")
-
-    seen_nodes = set()
-    available_rves = set()
-    wafer_nodes = 0
-    for node in nodes:
-        node_id = node.get("id")
-        if not node_id:
-            raise ValueError(f"{step_id} has a node without id")
-        if node_id in seen_nodes:
-            raise ValueError(f"{step_id} has duplicate node id {node_id}")
-        seen_nodes.add(node_id)
-
-        node_type = node.get("type")
-        action = node.get("action")
-        if node_type not in VALID_DAG_NODE_TYPES:
-            raise ValueError(f"{step_id} node {node_id} has unknown type {node_type}")
-        if action not in VALID_DAG_ACTIONS:
-            raise ValueError(f"{step_id} node {node_id} has unknown action {action}")
-
-        output = node.get("output")
-        expected_output = "wafer_result" if node_type == "wafer" else f"rve.{node_id}"
-        if output != expected_output:
-            raise ValueError(f"{step_id} node {node_id} output must be {expected_output}")
-
-        if node_type == "wafer":
-            wafer_nodes += 1
-
-        if action == "run":
-            _validate_run_node(step_id, node, available_rves)
-            if not node.get("result_file"):
-                raise ValueError(f"{step_id} node {node_id} missing result_file")
-        else:
-            if node_type == "wafer":
-                raise ValueError(f"{step_id} wafer node cannot inherit")
-            if node.get("inputs"):
-                raise ValueError(f"{step_id} inherited node {node_id} should not declare inputs")
-
-        if output.startswith(RVE_PREFIX):
-            available_rves.add(output[len(RVE_PREFIX):])
-
-    if wafer_nodes != 1:
-        raise ValueError(f"{step_id} must declare exactly one wafer node")
-
-
-def _validate_run_node(step_id, node, available_rves):
-    node_id = node["id"]
-    if not node.get("template"):
-        raise ValueError(f"{step_id} node {node_id} missing template")
-    if not node.get("template_path"):
-        raise ValueError(f"{step_id} node {node_id} has unresolved template {node.get('template')}")
-    inputs = node.get("inputs", {})
-    if node["type"] == "device":
-        if inputs:
-            raise ValueError(f"{step_id} device node {node_id} should not declare RVE inputs")
-        return
-
-    required_inputs = {
-        "mat": {"device"},
-        "die": {"mat1", "mat2", "mat3", "mat4"},
-        "wafer": {"die", "onon"},
-    }[node["type"]]
-    missing = required_inputs - set(inputs)
-    if missing:
-        raise ValueError(f"{step_id} node {node_id} missing inputs: {sorted(missing)}")
-    for slot, ref in inputs.items():
-        _validate_rve_ref(step_id, node_id, slot, ref, available_rves)
-
-
-def _validate_rve_ref(step_id, node_id, slot, ref, available_rves):
-    if not isinstance(ref, str) or not ref.startswith(RVE_PREFIX):
-        raise ValueError(f"{step_id} node {node_id} input {slot} must reference rve.<id>")
-    source = ref[len(RVE_PREFIX):]
-    if source not in available_rves:
-        raise ValueError(f"{step_id} node {node_id} input {slot} references unavailable {ref}")
+    raise ValueError("Only v2 params-txt-driven flow configs are supported")
 
 
 def _validate_v2_step(step, flow):
@@ -177,26 +49,19 @@ def _validate_v2_step(step, flow):
             template = templates[template_key]
             for slot, input_cfg in node.get("inputs", {}).items():
                 canonical_ref_name(input_cfg.get("ref"))
-                target = input_cfg.get("target") or template.get("input_targets", {}).get(slot)
-                if target:
-                    _validate_v2_target(step_id, node_id, slot, target)
+                _validate_v2_parameter_contract(step_id, node_id, slot, template)
         elif node.get("inputs"):
             raise ValueError(f"{step_id} node {node_id} with action {action} cannot declare inputs")
     if not seen_wafer:
         raise ValueError(f"{step_id} must declare wafer")
 
 
-def _validate_v2_target(step_id, node_id, slot, target):
-    material = target.get("material", {})
-    stress = target.get("stress", {})
-    for key in ("component", "tag", "elastic_group", "elastic_property", "elasticity_order", "D_format"):
-        if not material.get(key):
-            raise ValueError(f"{step_id} node {node_id} input {slot} missing material.{key}")
-    if material["D_format"] != "symmetric_upper21":
-        raise ValueError(f"{step_id} node {node_id} input {slot} must use symmetric_upper21 D")
-    for key in ("component", "physics", "feature", "property"):
-        if not stress.get(key):
-            raise ValueError(f"{step_id} node {node_id} input {slot} missing stress.{key}")
+def _validate_v2_parameter_contract(step_id, node_id, slot, template):
+    if template.get("input_targets"):
+        raise ValueError(f"{step_id} node {node_id} input {slot} uses deprecated input_targets")
+    parameter_inputs = template.get("parameter_inputs", {})
+    if parameter_inputs and slot not in parameter_inputs:
+        raise ValueError(f"{step_id} node {node_id} input {slot} missing parameter_inputs mapping")
 
 
 def _v2_templates(step, flow):
@@ -210,53 +75,7 @@ def build_step_input(step, flow, params, state_in_path, output_dir, parameter_tx
         StepInput.from_dict(step_input)
         return step_input
 
-    if "nodes" in step:
-        step_input = {
-            "step_id": step["id"],
-            "step_name": step["name"],
-            "process_type": step["process_type"],
-            "update_rule": step["update_rule"],
-            "templates": step.get("templates", {}),
-            "extractors": step.get("extractors", {}),
-            "nodes": step["nodes"],
-            "run_wafer": step.get("run_wafer", True),
-            "parameters": params,
-            "raw_parameters": step.get("raw_parameters", {}),
-            "parameter_txt_paths": {key: str(value) for key, value in parameter_txt_paths.items()},
-            "parameter_txt_order": step.get("parameter_txt_order", list(parameter_txt_paths)),
-            "state_in": str(state_in_path),
-            "output_dir": str(output_dir),
-        }
-        StepInput.from_dict(step_input)
-        return step_input
-
-    device_templates = flow["templates"]["devices"]
-    wafer_inputs = normalize_wafer_inputs(step, flow["wafer_slots"])
-    step_input = {
-        "step_id": step["id"],
-        "step_name": step["name"],
-        "process_type": step["process_type"],
-        "update_rule": step["update_rule"],
-        "templates": {
-            "devices": {
-                dev["name"]: device_templates[dev["template_key"]]
-                for dev in step.get("run_devices", [])
-            },
-            "mats": {mat: flow["templates"]["mats"][mat] for mat in flow["templates"]["mats"]},
-            "wafer": flow["templates"]["wafers"][step["wafer_template"]],
-        },
-        "run_devices": step.get("run_devices", []),
-        "run_mats": step.get("run_mats", []),
-        "mat_inputs": step.get("mat_inputs", {}),
-        "run_wafer": step.get("run_wafer", True),
-        "wafer_inputs": wafer_inputs,
-        "parameters": params,
-        "parameter_txt_paths": {key: str(value) for key, value in parameter_txt_paths.items()},
-        "state_in": str(state_in_path),
-        "output_dir": str(output_dir),
-    }
-    StepInput.from_dict(step_input)
-    return step_input
+    raise ValueError("Only v2 params-txt-driven step inputs are supported")
 
 
 def _build_v2_step_input(step, flow, params, state_in_path, output_dir, parameter_txt_paths):
@@ -266,7 +85,6 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
     nodes = []
     runs = []
     template_specs = {}
-    rve_inputs = {}
     ordered_names = [name for name in RUN_ORDER if name in node_map]
     if "onon" in node_map:
         ordered_names.append("onon")
@@ -295,10 +113,9 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
             )
             if node["action"] == "run":
                 entry["inputs"] = _compact_v2_inputs(node_id, node)
+                entry["input_parameter_txt_paths"] = _v2_input_parameter_txt_paths(node_id, entry["inputs"], state, output_dir)
+                entry["output_txt_path"] = str(_v2_output_txt_path(output_dir, node_id, template))
                 runs.append(dict(entry))
-                for source in entry["inputs"].values():
-                    if source not in produced and source in state.get("rve", {}):
-                        rve_inputs[source] = rve_payload_for_java(state["rve"][source])
         if node["action"] in {"default_from", "alias"}:
             entry["source"] = node.get("source")
         if "merge" in node:
@@ -313,7 +130,6 @@ def _build_v2_step_input(step, flow, params, state_in_path, output_dir, paramete
         "update_rule": step.get("update_rule", "init"),
         "template_registry": flow.get("template_registry") or step.get("template_registry") or "",
         "template_specs": template_specs,
-        "rve_inputs": rve_inputs,
         "runs": runs,
         "templates": {},
         "nodes": nodes,
@@ -340,21 +156,18 @@ def _compact_v2_inputs(node_id, node):
     return inputs
 
 
-def _expand_v2_inputs(node, template, state):
-    expanded = {}
-    for slot, input_cfg in node.get("inputs", {}).items():
-        ref = input_cfg["ref"]
-        source = canonical_ref_name(ref)
-        rve = state["rve"][source]
-        target = input_cfg.get("target") or template.get("input_targets", {}).get(slot, {})
-        expanded[slot] = {"source": ref, "rve": rve_payload_for_java(rve), "target": target}
-    return expanded
+def _v2_input_parameter_txt_paths(node_id, inputs, state, output_dir):
+    paths = {}
+    for slot, source in inputs.items():
+        path = Path(output_dir) / "inputs" / f"{node_id}_{slot}.txt"
+        paths[slot] = str(path)
+        if source in state.get("rve", {}):
+            write_rve_parameter_txt(path, slot, state["rve"][source])
+    return paths
 
 
-def normalize_wafer_inputs(step, wafer_slots):
-    update = list(step["wafer_inputs"].get("update", []))
-    inherit = step["wafer_inputs"].get("inherit")
-    if inherit is None:
-        update_set = set(update)
-        inherit = [slot for slot in wafer_slots if slot not in update_set]
-    return {"update": update, "inherit": list(inherit)}
+def _v2_output_txt_path(output_dir, node_id, template):
+    txt_file = template.get("outputs", {}).get("txt_file")
+    if not txt_file:
+        txt_file = "wafer_result.txt" if node_id == "wafer" else f"{node_id}_rve.txt"
+    return Path(output_dir) / "outputs" / txt_file

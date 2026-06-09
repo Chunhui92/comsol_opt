@@ -15,7 +15,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 from comsol_opt.config_io import dump_data, load_config, load_json
 from comsol_opt.cache_manager import StepCache
-from comsol_opt.flow import prepare_parameter_txt_set, run_flow
+from comsol_opt.flow import run_flow
 from comsol_opt.calibration import active_calibration_space, parameter_regularization_loss, select_groups
 from comsol_opt.loss import compute_loss_from_rows
 from comsol_opt.backends import make_backend
@@ -24,6 +24,45 @@ from comsol_opt.schemas import RveResult, StepInput, WaferState
 
 
 class V2ContractTests(unittest.TestCase):
+    def test_rve_parameter_txt_round_trips_upper21_values(self):
+        from comsol_opt.rve_txt import parse_rve_result_txt, rve_parameter_names, write_rve_parameter_txt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rve = valid_rve_dict()
+            matrix = [[float(10 * row + col) for col in range(6)] for row in range(6)]
+            for row in range(6):
+                for col in range(row):
+                    matrix[row][col] = matrix[col][row]
+            rve["rho"] = 2330.0
+            rve["stress_eff"] = {"sxx": 1.2e8, "syy": -3.5e8}
+            rve["D"] = matrix
+
+            input_path = root / "fecap_pillar.txt"
+            write_rve_parameter_txt(input_path, "pillar", rve)
+            text = input_path.read_text(encoding="utf-8")
+
+            self.assertIn("rve_pillar_rho\t2330.0[kg/m^3]", text)
+            self.assertIn("rve_pillar_sxx\t120000000.0[Pa]", text)
+            self.assertIn("rve_pillar_syy\t-350000000.0[Pa]", text)
+            self.assertEqual(len([name for name in rve_parameter_names("pillar") if "_D" in name]), 21)
+            self.assertIn("rve_pillar_D12\t1.0[Pa]", text)
+            self.assertIn("rve_pillar_D66\t55.0[Pa]", text)
+
+            output_path = root / "rve_output.txt"
+            output_path.write_text(
+                input_path.read_text(encoding="utf-8")
+                .replace("rve_pillar_", "")
+                .replace("[kg/m^3]", "")
+                .replace("[Pa]", ""),
+                encoding="utf-8",
+            )
+            parsed = parse_rve_result_txt(output_path, source_step="S04", source_model="fecap")
+            self.assertEqual(parsed["rho"], 2330.0)
+            self.assertEqual(parsed["stress_eff"]["sxx"], 1.2e8)
+            self.assertEqual(parsed["stress_eff"]["syy"], -3.5e8)
+            self.assertEqual(parsed["D"], matrix)
+
     def test_upper21_round_trips_symmetric_matrix_and_defines_canonical_nodes(self):
         from comsol_opt.v2_contract import CANONICAL_NODES, matrix_to_upper21, upper21_to_matrix
 
@@ -57,7 +96,7 @@ class V2FlowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_flow(onon_flow)
 
-    def test_v2_step_input_expands_rve_payload_and_material_target(self):
+    def test_v2_step_input_writes_rve_parameter_txt_contract(self):
         from comsol_opt.step_input import build_step_input, validate_flow
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,12 +129,13 @@ class V2FlowTests(unittest.TestCase):
             fecap = next(node for node in step_input["nodes"] if node["node"] == "fecap")
             self.assertEqual(fecap["inputs"]["pillar"], "pillar")
             self.assertEqual(fecap["inputs"]["onon"], "onon")
-            target = step_input["template_specs"]["fecap_model_all"]["input_targets"]["pillar"]
-            self.assertEqual(target["material"]["D_format"], "symmetric_upper21")
-            self.assertEqual(target["material"]["elastic_property"], "TODO_FECAP_PILLAR_ELASTIC_PROPERTY")
-            self.assertEqual(target["stress"]["property"], "S0")
-            self.assertEqual(len(step_input["rve_inputs"]["pillar"]["D_upper21"]), 21)
-            self.assertEqual(step_input["rve_inputs"]["pillar"]["D_format"], "symmetric_upper21")
+            runs = {run["node"]: run for run in step_input["runs"]}
+            pillar_txt = Path(runs["fecap"]["input_parameter_txt_paths"]["pillar"])
+            self.assertTrue(pillar_txt.exists())
+            self.assertIn("rve_pillar_rho", pillar_txt.read_text(encoding="utf-8"))
+            self.assertEqual(runs["fecap"]["output_txt_path"], str(root / "S04_sc_etch" / "outputs" / "fecap_rve.txt"))
+            self.assertNotIn("input_targets", json.dumps(step_input))
+            self.assertNotIn("D_upper21", json.dumps(step_input))
 
     def test_v2_step_input_writes_compact_runs_and_deduplicated_rves(self):
         from comsol_opt.flow_runner import load_flow_definition
@@ -131,13 +171,13 @@ class V2FlowTests(unittest.TestCase):
 
             self.assertEqual(step_input["template_registry"], "configs/templates.yaml")
             self.assertIn("template_specs", step_input)
-            self.assertIn("rve_inputs", step_input)
+            self.assertNotIn("rve_inputs", step_input)
             self.assertIn("runs", step_input)
-            self.assertIn("onon", step_input["rve_inputs"])
-            self.assertEqual(len([key for key in step_input["rve_inputs"] if key == "pillar"]), 1)
 
             runs = {run["node"]: run for run in step_input["runs"]}
             self.assertEqual(runs["fecap"]["inputs"], {"pillar": "pillar", "sc": "sc", "onon": "onon"})
+            self.assertIn("input_parameter_txt_paths", runs["fecap"])
+            self.assertTrue(Path(runs["fecap"]["input_parameter_txt_paths"]["pillar"]).exists())
             self.assertEqual(
                 runs["die"]["inputs"],
                 {"decap1": "decap1", "decap2": "decap2", "decap3": "decap3", "fecap": "fecap", "onon": "onon"},
@@ -265,14 +305,13 @@ class V2FlowTests(unittest.TestCase):
                     "base": {
                         "path": "models/process_models/cap_models/decap_model_all.mph",
                         "studies": {"stress": "std0", "cp": "cp0"},
-                        "extractors": {"rho": "rho", "stress": "stress", "D": "D"},
+                        "outputs": {"result_file": "decap_rve.json", "txt_file": "decap_rve.txt"},
                     },
                     "members": {
-                        "decap1": {"component": "comp6", "physics": "solid6", "studies": {"stress": "std3", "cp": "solid6cp1std"}},
-                        "decap2": {"component": "comp5", "physics": "solid5", "studies": {"stress": "std1", "cp": "solid5cp1std"}},
-                        "decap3": {"component": "comp7", "physics": "solid4", "studies": {"stress": "std2", "cp": "solid4cp1std"}},
+                        "decap1": {"studies": {"stress": "std3", "cp": "solid6cp1std"}},
+                        "decap2": {"studies": {"stress": "std1", "cp": "solid5cp1std"}},
+                        "decap3": {"studies": {"stress": "std2", "cp": "solid4cp1std"}},
                     },
-                    "input_target_slots": ["pillar", "onon"],
                 }
             }
             registry["templates"] = {
@@ -296,8 +335,8 @@ class V2FlowTests(unittest.TestCase):
             templates = loaded["templates"]["templates"]
 
             self.assertEqual(templates["decap_model_decap1"]["node_type"], "decap1")
-            self.assertEqual(templates["decap_model_decap2"]["component"], "comp5")
-            self.assertEqual(templates["decap_model_decap3"]["input_targets"]["onon"]["stress"]["physics"], "solid4")
+            self.assertEqual(templates["decap_model_decap2"]["studies"]["stress"], "std1")
+            self.assertEqual(templates["decap_model_decap3"]["outputs"]["txt_file"], "decap_rve.txt")
             self.assertEqual(loaded["steps"][0]["nodes"]["decap2"]["template"], "decap_model_decap2")
 
 
@@ -347,15 +386,16 @@ class V2MockFlowTests(unittest.TestCase):
             self.assertIn("node=sc action=run template=sc_model", log_text)
             self.assertIn("node=fecap action=run template=fecap_model_all", log_text)
             self.assertIn("input slot=sc source=rve.sc source_step=S04", log_text)
-            self.assertIn("material component=comp8 tag=TODO_FECAP_PILLAR_MATERIAL_TAG", log_text)
-            self.assertIn("stress type=initial_stress component=comp8 physics=solid8", log_text)
+            self.assertIn("parameter_txt slot=pillar", log_text)
+            self.assertIn("output_txt=", log_text)
             self.assertIn("wafer bow_x_um=", log_text)
             interface_log = load_json(s04_dir / "logs" / "interface.json")
             self.assertEqual(interface_log["step_id"], "S04")
             self.assertEqual(interface_log["runs"][1]["node"], "fecap")
             self.assertEqual(interface_log["runs"][1]["inputs"]["pillar"]["source"], "rve.pillar")
-            self.assertEqual(interface_log["runs"][1]["inputs"]["pillar"]["target"]["material"]["component"], "comp8")
+            self.assertTrue(Path(interface_log["runs"][1]["inputs"]["pillar"]["parameter_txt"]).exists())
             self.assertEqual(interface_log["runs"][-1]["outputs"]["result_file"], "wafer_result.json")
+            self.assertTrue((s04_dir / "outputs" / "fecap_rve.txt").exists())
 
     def test_v2_mock_stress_only_node_inherits_previous_D(self):
         from comsol_opt.mock_comsol_worker import run_mock_step
@@ -465,7 +505,7 @@ class V2MockFlowTests(unittest.TestCase):
             self.assertIn("command=", log_text)
             self.assertIn("worker_status=success", log_text)
 
-    def test_comsol_backend_rejects_unresolved_todo_tags(self):
+    def test_comsol_backend_rejects_missing_declared_parameter_txt(self):
         from comsol_opt.backends import ComsolBackend
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -482,15 +522,15 @@ class V2MockFlowTests(unittest.TestCase):
                     "step_name": "sc_etch",
                     "output_dir": str(root / "S04"),
                     "state_in": str(state),
-                    "nodes": [{"node": "sc", "component": "TODO_SC_COMPONENT"}],
+                    "runs": [{"node": "fecap", "input_parameter_txt_paths": {"pillar": str(root / "missing.txt")}}],
                 },
             )
 
-            with self.assertRaisesRegex(RuntimeError, "unresolved TODO tags"):
+            with self.assertRaisesRegex(RuntimeError, "missing parameter txt files"):
                 ComsolBackend([sys.executable, str(worker)]).run_step(step_input)
 
             log_text = (root / "S04" / "logs" / "step.log").read_text(encoding="utf-8")
-            self.assertIn("worker_status=blocked unresolved_tags=", log_text)
+            self.assertIn("worker_status=blocked missing_parameter_txt=", log_text)
 
 
 class ParameterTxtSetTests(unittest.TestCase):
@@ -562,7 +602,9 @@ class WorkflowIntegrationTests(unittest.TestCase):
             log_text = (run_dir / "S20" / "logs" / "step.log").read_text(encoding="utf-8")
             self.assertIn("step_id=S20 step_name=feslit_buff_cmp", log_text)
             self.assertIn("node=fecap action=run", log_text)
-            self.assertIn("material component=", log_text)
+            self.assertIn("parameter_txt slot=", log_text)
+            self.assertTrue((run_dir / "S20" / "logs" / "interface.json").exists())
+            self.assertTrue((run_dir / "S20" / "outputs" / "fecap_rve.txt").exists())
             with (run_dir / "summary.csv").open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 20)
@@ -843,7 +885,6 @@ class ConfigTests(unittest.TestCase):
     def test_configs_directory_contains_only_active_layered_scheme(self):
         active_root_files = {
             "calibration_space.yaml",
-            "extractors.yaml",
             "flow.yaml",
             "templates.yaml",
         }
@@ -879,20 +920,18 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(template_paths)
         self.assertTrue(all(path.startswith("models/process_models/") for path in template_paths))
 
-    def test_legacy_parameter_map_is_archived_but_still_supported(self):
+    def test_legacy_parameter_map_is_archived_only(self):
         parameter_map = load_config(ROOT / "archive" / "legacy_config_scheme" / "parameter_map.yaml")
-        txt_set = prepare_parameter_txt_set(ROOT)
         mapping = parameter_map["parameters"]["W.sigma_fill"]
         self.assertEqual(mapping["file"], "stress")
         self.assertEqual(mapping["txt_name"], "sigma_w_fill")
-        self.assertEqual(txt_set.mappings["W.sigma_fill"]["file"], "stress")
-        self.assertEqual(txt_set.mappings["W.sigma_fill"]["name"], "sigma_w_fill")
 
     def test_cli_defaults_do_not_point_to_legacy_config_files(self):
         run_flow_text = (ROOT / "python" / "run_flow.py").read_text(encoding="utf-8")
         calibration_text = (ROOT / "python" / "calibration_optuna.py").read_text(encoding="utf-8")
         self.assertNotIn("params_nominal.yaml", run_flow_text)
         self.assertNotIn("parameter_map.yaml", run_flow_text)
+        self.assertNotIn("--parameter-map", run_flow_text)
         self.assertNotIn("exp\" / \"bow_experiment.csv", run_flow_text)
         self.assertNotIn("params_nominal.yaml", calibration_text)
         self.assertIn("configs\" / \"experiments\" / \"bow_experiment.csv", run_flow_text)
@@ -941,32 +980,35 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("model.param().loadFile", text)
         self.assertIn(".study(", text)
         self.assertIn(".run()", text)
-        self.assertIn("gev1", text)
-        self.assertIn("gmevescp2", text)
         self.assertIn("run_wafer", text)
         self.assertIn("parseNodes", text)
         self.assertIn("parameter_txt_order", text)
         self.assertIn("runDagNode", text)
         self.assertIn("inheritRve", text)
-        self.assertIn("injectRveInputs", text)
+        self.assertIn("loadParameterFiles", text)
+        self.assertIn("parseOutputTxt", text)
         self.assertIn("resultFile", text)
         self.assertIn("manifest.json", text)
         self.assertIn("\"rve\"", text)
         self.assertIn("materials_state", text)
         self.assertIn("historyJson", text)
-        self.assertIn("applyMaterialTarget", text)
-        self.assertIn("applyStressTarget", text)
-        self.assertIn("propertyGroup(elasticGroupTag)", text)
-        self.assertIn("elasticPropertyName", text)
-        self.assertIn("D_upper21", text)
-        self.assertIn("symmetric_upper21", text)
-        self.assertIn("parseInputTransfers", text)
-        self.assertIn("MaterialTarget", text)
-        self.assertIn("StressTarget", text)
-        self.assertIn("target.material", text)
-        self.assertIn("target.stress", text)
+        self.assertIn("outputTxtPath", text)
+        self.assertNotIn("applyMaterialTarget", text)
+        self.assertNotIn("applyStressTarget", text)
+        self.assertNotIn("propertyGroup(elasticGroupTag)", text)
+        self.assertNotIn("elasticPropertyName", text)
+        self.assertNotIn("D_upper21", text)
+        self.assertNotIn("symmetric_upper21", text)
+        self.assertNotIn("parseInputTransfers", text)
+        self.assertNotIn("MaterialTarget", text)
+        self.assertNotIn("StressTarget", text)
+        self.assertNotIn("target.material", text)
+        self.assertNotIn("target.stress", text)
         self.assertNotIn("input_%s_d11", text)
         self.assertNotIn("input_%s_d22", text)
+        self.assertNotIn("waferInputsToJson", text)
+        self.assertNotIn("wafer_inputs", text)
+        self.assertNotIn("device_rves", text)
         for legacy_name in ("device_main", "device_aux", "onon_device", "mat1", "mat2", "mat3", "mat4"):
             self.assertNotIn(legacy_name, text)
 
@@ -1008,8 +1050,7 @@ class ConfigTests(unittest.TestCase):
                 "step_id": "S01",
                 "step_name": "step",
                 "wafer_result": {"bow_x_um": 0.0, "bow_y_um": 0.0, "kx": 0.0, "ky": 0.0},
-                "device_rves": {"device_default": valid_rve_dict()},
-                "wafer_inputs": {"mat1": valid_rve_dict()},
+                "rve": {"pillar": valid_rve_dict()},
                 "materials_state": {},
                 "geometry_state": {},
                 "history": [],
@@ -1036,60 +1077,31 @@ def valid_rve_dict():
 
 
 def minimal_v2_flow_and_step():
-    target = {
-        "material": {
-            "component": "comp8",
-            "tag": "TODO_FECAP_PILLAR_MATERIAL_TAG",
-            "density_group": "def",
-            "density_property": "density",
-            "elastic_group": "TODO_FECAP_PILLAR_ELASTIC_GROUP",
-            "elastic_property": "TODO_FECAP_PILLAR_ELASTIC_PROPERTY",
-            "elasticity_order": "standard",
-            "D_format": "symmetric_upper21",
-        },
-        "stress": {
-            "type": "initial_stress",
-            "component": "comp8",
-            "physics": "solid8",
-            "parent_feature": "TODO_FECAP_PILLAR_STRESS_PARENT",
-            "feature": "TODO_FECAP_PILLAR_STRESS_FEATURE",
-            "property": "S0",
-            "stress_format": "diag_sxx_syy",
-        },
-    }
     templates = {
         "templates": {
             "sc_model": {
                 "path": "models/sc.mph",
                 "node_type": "sc",
                 "studies": {"stress": "std1", "cp": "cp1"},
-                "extractors": {"rho": "gev_rho", "stress": "gev_stress", "D": "gev_D"},
+                "outputs": {"result_file": "sc_rve.json", "txt_file": "sc_rve.txt"},
             },
             "fecap_model_all": {
                 "path": "models/fecap.mph",
                 "node_type": "fecap",
                 "studies": {"stress": "std4", "cp": "cp4"},
-                "extractors": {"rho": "gev_rho", "stress": "gev_stress", "D": "gev_D"},
-                "input_targets": {"pillar": target, "sc": target},
+                "outputs": {"result_file": "fecap_rve.json", "txt_file": "fecap_rve.txt"},
             },
             "die_model": {
                 "path": "models/die.mph",
                 "node_type": "die",
                 "studies": {"stress": "std2", "cp": "cp2"},
-                "extractors": {"rho": "gev_rho", "stress": "gev_stress", "D": "gev_D"},
-                "input_targets": {
-                    "decap1": target,
-                    "decap2": target,
-                    "decap3": target,
-                    "fecap": target,
-                },
+                "outputs": {"result_file": "die_rve.json", "txt_file": "die_rve.txt"},
             },
             "wafer_warp_model": {
                 "path": "models/wafer.mph",
                 "node_type": "wafer",
                 "studies": {"stress": "std_w"},
-                "extractors": {"bow_x_um": "gev_bow_x", "bow_y_um": "gev_bow_y"},
-                "input_targets": {"die": target, "onon": target},
+                "outputs": {"result_file": "wafer_result.json", "txt_file": "wafer_result.txt"},
             },
         }
     }

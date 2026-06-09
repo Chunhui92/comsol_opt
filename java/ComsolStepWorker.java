@@ -14,10 +14,13 @@ import java.util.regex.Pattern;
 
 public class ComsolStepWorker {
     private static final String DEFAULT_STUDY_TAG = "std1";
-    private static final String DEFAULT_STRESS_GEV_TAG = "gev1";
-    private static final String DEFAULT_RHO_GEV_TAG = "gev_rho";
-    private static final String DEFAULT_D_MATRIX_TAG = "gmevescp2";
-    private static final String DEFAULT_BOW_GEV_TAG = "gev_bow";
+    private static final String[] D_KEYS = {
+        "D11", "D12", "D13", "D14", "D15", "D16",
+        "D22", "D23", "D24", "D25", "D26",
+        "D33", "D34", "D35", "D36",
+        "D44", "D45", "D46",
+        "D55", "D56", "D66"
+    };
 
     public static void main(String[] args) throws Exception {
         if (args.length != 1) {
@@ -51,8 +54,13 @@ public class ComsolStepWorker {
 
     private static NodeResult runDagNode(StepInput input, NodeRun node, Map<String, RveResult> rves) throws Exception {
         if ("inherit".equals(node.action)) {
-            RveResult inherited = inheritRve(input, node, rves);
+            RveResult inherited = inheritRve(input, node.id, rves);
             return NodeResult.rve(inherited, ManifestEntry.inherited(node, inherited.sourceStep));
+        }
+        if ("default_from".equals(node.action) || "alias".equals(node.action)) {
+            RveResult source = inheritRve(input, node.source, rves).copy();
+            source.sourceNode = node.source;
+            return NodeResult.rve(source, ManifestEntry.inherited(node, source.sourceStep));
         }
         if (!"run".equals(node.action)) {
             throw new IllegalArgumentException(input.stepId + " node " + node.id + " has unknown action " + node.action);
@@ -65,51 +73,44 @@ public class ComsolStepWorker {
             return NodeResult.wafer(wafer, ManifestEntry.ran(node, input.stepId));
         }
 
-        RveResult rve = runRveModel(node, input.parameterFiles, rves);
+        RveResult previous = rves.get(node.id);
+        RveResult rve = runRveModel(node, input.parameterFiles, rves, previous);
         rve.sourceStep = input.stepId;
         rve.sourceModel = node.templateKey;
+        rve.sourceNode = node.id;
         return NodeResult.rve(rve, ManifestEntry.ran(node, input.stepId));
     }
 
-    private static RveResult inheritRve(StepInput input, NodeRun node, Map<String, RveResult> rves) {
-        RveResult inherited = rves.get(node.id);
+    private static RveResult inheritRve(StepInput input, String nodeId, Map<String, RveResult> rves) {
+        RveResult inherited = rves.get(nodeId);
         if (inherited == null || !inherited.valid) {
-            throw new IllegalStateException(input.stepId + " cannot inherit invalid RVE " + node.id);
+            throw new IllegalStateException(input.stepId + " cannot inherit invalid RVE " + nodeId);
         }
         return inherited;
     }
 
-    private static RveResult runRveModel(NodeRun node, List<Path> parameterFiles, Map<String, RveResult> rves) throws Exception {
+    private static RveResult runRveModel(NodeRun node, List<Path> parameterFiles, Map<String, RveResult> rves, RveResult previous) throws Exception {
         Model model = ModelUtil.load("model_" + sanitize(node.id), node.templatePath);
+        writeInputParameterTxts(node, rves);
         loadParameterFiles(model, parameterFiles);
-        injectRveInputs(model, node, rves);
+        loadParameterFiles(model, node.inputParameterTxtPaths);
         model.study(node.studies.getOrDefault("stress", DEFAULT_STUDY_TAG)).run();
         String cpStudy = node.studies.getOrDefault("cp", "");
         if (!cpStudy.isEmpty()) {
             model.study(cpStudy).run();
         }
-
-        double rho = firstReal(model, node.extractorTags.getOrDefault("rho", DEFAULT_RHO_GEV_TAG), 0.0);
-        double[] stress = realVector(model, node.extractorTags.getOrDefault("stress", DEFAULT_STRESS_GEV_TAG), 2);
-        String matrixTag = node.extractorTags.getOrDefault("D", DEFAULT_D_MATRIX_TAG);
-        double[][] stiffness = matrix6x6(model, matrixTag);
-
         ModelUtil.remove(model.tag());
-        return new RveResult(true, true, rho, stress[0], stress[1], stiffness);
+        return parseOutputTxt(node.outputTxtPath, node.id, previous);
     }
 
     private static WaferResult runWaferModel(NodeRun node, List<Path> parameterFiles, Map<String, RveResult> rves) throws Exception {
         Model model = ModelUtil.load("model_wafer", node.templatePath);
+        writeInputParameterTxts(node, rves);
         loadParameterFiles(model, parameterFiles);
-        injectRveInputs(model, node, rves);
+        loadParameterFiles(model, node.inputParameterTxtPaths);
         model.study(node.studies.getOrDefault("stress", DEFAULT_STUDY_TAG)).run();
-
-        double bowX = firstReal(model, node.extractorTags.getOrDefault("bow_x_um", DEFAULT_BOW_GEV_TAG), 0.0);
-        double bowY = firstReal(model, node.extractorTags.getOrDefault("bow_y_um", DEFAULT_BOW_GEV_TAG), 0.0);
-        double kx = firstReal(model, node.extractorTags.getOrDefault("kx", DEFAULT_BOW_GEV_TAG), 0.0);
-        double ky = firstReal(model, node.extractorTags.getOrDefault("ky", DEFAULT_BOW_GEV_TAG), 0.0);
         ModelUtil.remove(model.tag());
-        return new WaferResult(bowX, bowY, kx, ky);
+        return parseWaferOutputTxt(node.outputTxtPath);
     }
 
     private static void loadParameterFiles(Model model, List<Path> parameterFiles) {
@@ -118,137 +119,104 @@ public class ComsolStepWorker {
         }
     }
 
-    private static void injectRveInputs(Model model, NodeRun node, Map<String, RveResult> rves) {
-        for (InputTransfer transfer : node.inputTransfers) {
-            if (!transfer.hasTargets()) {
-                continue;
-            }
-            applyMaterialTarget(model, transfer.material, transfer);
-            applyStressTarget(model, transfer.stress, transfer);
-        }
-        for (Map.Entry<String, String> input : node.inputs.entrySet()) {
-            String sourceId = input.getValue().startsWith("rve.") ? input.getValue().substring("rve.".length()) : input.getValue();
-            RveResult rve = rves.get(sourceId);
+    private static void writeInputParameterTxts(NodeRun node, Map<String, RveResult> rves) throws IOException {
+        for (Map.Entry<String, Path> entry : node.inputParameterTxtPathBySlot.entrySet()) {
+            String slot = entry.getKey();
+            String source = node.inputs.getOrDefault(slot, slot);
+            RveResult rve = rves.get(source);
             if (rve == null || !rve.valid) {
-                throw new IllegalStateException("Missing valid upstream RVE " + input.getValue());
+                throw new IllegalStateException(node.id + " missing valid RVE input " + source);
             }
-            String targetText = objectText(objectText(node.templateSpecText, "input_targets"), input.getKey());
-            if (!targetText.isEmpty()) {
-                InputTransfer transfer = InputTransfer.fromRve(input.getKey(), input.getValue(), rve);
-                applyMaterialTarget(model, MaterialTarget.fromJson(objectText(targetText, "material")), transfer);
-                applyStressTarget(model, StressTarget.fromJson(objectText(targetText, "stress")), transfer);
-                continue;
-            }
-            String slot = sanitize(input.getKey());
-            applyMaterialTarget(model, slot + "_component", slot + "_material", slot + "_elastic", "D", rve);
-            applyStressTarget(model, slot + "_component", nodePhysicsTag(slot), slot + "_lemm", slot + "_initial_stress", rve);
+            writeRveParameterTxt(entry.getValue(), slot, rve);
         }
     }
 
-    private static void applyMaterialTarget(Model model, MaterialTarget target, InputTransfer transfer) {
-        model.component(target.componentTag)
-            .material(target.materialTag)
-            .propertyGroup(target.densityGroupTag)
-            .set(target.densityPropertyName, new String[] { transfer.rhoExpression });
-        model.component(target.componentTag)
-            .material(target.materialTag)
-            .propertyGroup(target.elasticGroupTag)
-            .set(target.elasticPropertyName, transfer.dUpper21Expressions);
-    }
-
-    private static void applyStressTarget(Model model, StressTarget target, InputTransfer transfer) {
-        model.component(target.componentTag)
-            .physics(target.physicsTag)
-            .feature(target.parentFeatureTag)
-            .feature(target.featureTag)
-            .set(target.propertyName, new String[] {
-                transfer.sxxExpression, "0[Pa]", "0[Pa]",
-                "0[Pa]", transfer.syyExpression, "0[Pa]",
-                "0[Pa]", "0[Pa]", "0[Pa]"
-            });
-    }
-
-    private static void applyMaterialTarget(
-        Model model,
-        String componentTag,
-        String materialTag,
-        String elasticGroupTag,
-        String elasticPropertyName,
-        RveResult rve
-    ) {
-        model.component(componentTag)
-            .material(materialTag)
-            .propertyGroup("def")
-            .set("density", new String[] { rve.rho + "[kg/m^3]" });
-        model.component(componentTag)
-            .material(materialTag)
-            .propertyGroup(elasticGroupTag)
-            .set(elasticPropertyName, symmetricUpper21Expressions(rve));
-    }
-
-    private static void applyStressTarget(
-        Model model,
-        String componentTag,
-        String physicsTag,
-        String parentFeatureTag,
-        String stressFeatureTag,
-        RveResult rve
-    ) {
-        model.component(componentTag)
-            .physics(physicsTag)
-            .feature(parentFeatureTag)
-            .feature(stressFeatureTag)
-            .set("S0", new String[] {
-                rve.sxx + "[Pa]", "0[Pa]", "0[Pa]",
-                "0[Pa]", rve.syy + "[Pa]", "0[Pa]",
-                "0[Pa]", "0[Pa]", "0[Pa]"
-            });
-    }
-
-    private static String nodePhysicsTag(String slot) {
-        return slot + "_physics";
-    }
-
-    private static String[] symmetricUpper21Expressions(RveResult rve) {
-        List<String> values = new ArrayList<>();
+    private static void writeRveParameterTxt(Path path, String slot, RveResult rve) throws IOException {
+        Files.createDirectories(path.getParent());
+        String prefix = "rve_" + slot;
+        StringBuilder text = new StringBuilder();
+        text.append(prefix).append("_rho\t").append(rve.rho).append("[kg/m^3]\teffective density\n");
+        text.append(prefix).append("_sxx\t").append(rve.sxx).append("[Pa]\tresidual stress xx\n");
+        text.append(prefix).append("_syy\t").append(rve.syy).append("[Pa]\tresidual stress yy\n");
+        int index = 0;
         for (int row = 0; row < 6; row++) {
             for (int col = row; col < 6; col++) {
-                values.add(rve.d[row][col] + "[Pa]");
+                text.append(prefix).append("_").append(D_KEYS[index++]).append("\t").append(rve.d[row][col]).append("[Pa]\tstiffness\n");
             }
         }
-        return values.toArray(new String[0]);
+        Files.writeString(path, text.toString(), StandardCharsets.UTF_8);
     }
 
-    private static double firstReal(Model model, String numericalTag, double fallback) {
-        double[] values = realVector(model, numericalTag, 1);
-        return values.length == 0 ? fallback : values[0];
-    }
-
-    private static double[] realVector(Model model, String numericalTag, int minLength) {
-        double[][] raw = model.result().numerical(numericalTag).getReal();
-        List<Double> values = new ArrayList<>();
-        for (double[] row : raw) {
-            for (double value : row) {
-                values.add(value);
-            }
-        }
-        while (values.size() < minLength) {
-            values.add(0.0);
-        }
-        double[] result = new double[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            result[i] = values.get(i);
-        }
-        return result;
-    }
-
-    private static double[][] matrix6x6(Model model, String numericalTag) {
-        double[] flat = realVector(model, numericalTag, 36);
+    private static RveResult parseOutputTxt(Path path, String nodeId, RveResult previous) throws IOException {
+        Map<String, Double> values = parseParameterTxt(path);
         double[][] matrix = new double[6][6];
-        for (int i = 0; i < 36; i++) {
-            matrix[i / 6][i % 6] = flat[i];
+        boolean hasFullD = true;
+        for (String key : D_KEYS) {
+            hasFullD = hasFullD && values.containsKey(key);
         }
-        return matrix;
+        if (hasFullD) {
+            fillUpperTriangle(matrix, values);
+        } else if (previous != null) {
+            matrix = previous.d;
+        } else {
+            throw new IllegalArgumentException(nodeId + " output txt missing D fields");
+        }
+        return new RveResult(
+            true,
+            true,
+            values.getOrDefault("rho", 0.0),
+            values.getOrDefault("sxx", 0.0),
+            values.getOrDefault("syy", 0.0),
+            matrix
+        );
+    }
+
+    private static WaferResult parseWaferOutputTxt(Path path) throws IOException {
+        Map<String, Double> values = parseParameterTxt(path);
+        return new WaferResult(
+            values.getOrDefault("bow_x_um", 0.0),
+            values.getOrDefault("bow_y_um", 0.0),
+            values.getOrDefault("kx", 0.0),
+            values.getOrDefault("ky", 0.0)
+        );
+    }
+
+    private static Map<String, Double> parseParameterTxt(Path path) throws IOException {
+        Map<String, Double> values = new LinkedHashMap<>();
+        for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("%")) {
+                continue;
+            }
+            String[] parts = trimmed.split("\\s+");
+            if (parts.length >= 2) {
+                values.put(parts[0], expressionToDouble(parts[1]));
+            }
+        }
+        return values;
+    }
+
+    private static double expressionToDouble(String expression) {
+        Matcher matcher = Pattern.compile("^([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?)(?:\\[([^]]+)])?$").matcher(expression);
+        if (!matcher.find()) {
+            return 0.0;
+        }
+        double value = Double.parseDouble(matcher.group(1));
+        String unit = matcher.group(2);
+        if ("MPa".equals(unit)) return value * 1.0e6;
+        if ("GPa".equals(unit)) return value * 1.0e9;
+        return value;
+    }
+
+    private static void fillUpperTriangle(double[][] matrix, Map<String, Double> values) {
+        int index = 0;
+        for (int row = 0; row < 6; row++) {
+            for (int col = row; col < 6; col++) {
+                double value = values.get(D_KEYS[index++]);
+                matrix[row][col] = value;
+                matrix[col][row] = value;
+            }
+        }
     }
 
     private static void writeNodeResult(Path outputDir, NodeRun node, String payload) throws IOException {
@@ -293,14 +261,10 @@ public class ComsolStepWorker {
         builder.append("{\n  \"step_id\": ").append(json(input.stepId)).append(",\n  \"nodes\": {");
         int index = 0;
         for (Map.Entry<String, ManifestEntry> entry : manifest.entrySet()) {
-            if (index++ > 0) {
-                builder.append(",");
-            }
+            if (index++ > 0) builder.append(",");
             builder.append("\n    ").append(json(entry.getKey())).append(": ").append(entry.getValue().toJson());
         }
-        if (!manifest.isEmpty()) {
-            builder.append("\n  ");
-        }
+        if (!manifest.isEmpty()) builder.append("\n  ");
         builder.append("}\n}\n");
         return builder.toString();
     }
@@ -310,9 +274,7 @@ public class ComsolStepWorker {
         String rveText = objectText(text, "rve");
         for (String object : splitTopLevelObjects(rveText)) {
             String key = objectKey(object);
-            if (!key.isEmpty()) {
-                values.put(key, RveResult.fromJson(object));
-            }
+            if (!key.isEmpty()) values.put(key, RveResult.fromJson(object));
         }
         return values;
     }
@@ -321,14 +283,10 @@ public class ComsolStepWorker {
         StringBuilder json = new StringBuilder("{");
         int index = 0;
         for (Map.Entry<String, RveResult> entry : values.entrySet()) {
-            if (index++ > 0) {
-                json.append(",");
-            }
+            if (index++ > 0) json.append(",");
             json.append("\n    ").append(json(entry.getKey())).append(": ").append(entry.getValue().toJson());
         }
-        if (!values.isEmpty()) {
-            json.append("\n  ");
-        }
+        if (!values.isEmpty()) json.append("\n  ");
         json.append("}");
         return json.toString();
     }
@@ -339,28 +297,14 @@ public class ComsolStepWorker {
     }
 
     private static String historyJson(String stateInText, StepInput input, WaferResult wafer, boolean waferSkipped) {
-        String history = arrayText(stateInText, "history");
-        if (waferSkipped) {
-            return history.isEmpty() ? "[]" : "[" + history + "]";
-        }
-        String entry = "{"
-            + "\"step_id\":" + json(input.stepId)
+        String previous = arrayText(stateInText, "history");
+        String entry = "{\"step_id\":" + json(input.stepId)
             + ",\"step_name\":" + json(input.stepName)
-            + ",\"bow_x_um\":" + wafer.bowX
-            + ",\"bow_y_um\":" + wafer.bowY
+            + ",\"wafer_result\":" + wafer.toJson()
+            + ",\"wafer_skipped\":" + waferSkipped
             + "}";
-        if (history.trim().isEmpty()) {
-            return "[" + entry + "]";
-        }
-        return "[" + history + "," + entry + "]";
-    }
-
-    private static String sanitize(String value) {
-        return value.replaceAll("[^A-Za-z0-9_]", "_");
-    }
-
-    private static String json(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        if (previous.trim().isEmpty()) return "[" + entry + "]";
+        return "[" + previous + "," + entry + "]";
     }
 
     private static final class StepInput {
@@ -372,15 +316,7 @@ public class ComsolStepWorker {
         final List<Path> parameterFiles;
         final List<NodeRun> nodes;
 
-        private StepInput(
-            String stepId,
-            String stepName,
-            boolean runWafer,
-            Path stateIn,
-            Path outputDir,
-            List<Path> parameterFiles,
-            List<NodeRun> nodes
-        ) {
+        private StepInput(String stepId, String stepName, boolean runWafer, Path stateIn, Path outputDir, List<Path> parameterFiles, List<NodeRun> nodes) {
             this.stepId = stepId;
             this.stepName = stepName;
             this.runWafer = runWafer;
@@ -394,8 +330,8 @@ public class ComsolStepWorker {
             String text = Files.readString(path, StandardCharsets.UTF_8);
             return new StepInput(
                 stringValue(text, "step_id"),
-                stringValue(text, "step_name"),
-                booleanValue(text, "run_wafer"),
+                optionalStringValue(text, "step_name"),
+                booleanValue(text, "run_wafer", true),
                 Path.of(stringValue(text, "state_in")),
                 Path.of(stringValue(text, "output_dir")),
                 parameterFilesInOrder(text),
@@ -412,26 +348,14 @@ public class ComsolStepWorker {
         final String templatePath;
         final String output;
         final String resultFile;
+        final String source;
         final Map<String, String> studies;
         final Map<String, String> inputs;
-        final List<InputTransfer> inputTransfers;
-        final Map<String, String> extractorTags;
-        final String templateSpecText;
+        final List<Path> inputParameterTxtPaths;
+        final Map<String, Path> inputParameterTxtPathBySlot;
+        final Path outputTxtPath;
 
-        private NodeRun(
-            String id,
-            String type,
-            String action,
-            String templateKey,
-            String templatePath,
-            String output,
-            String resultFile,
-            Map<String, String> studies,
-            Map<String, String> inputs,
-            List<InputTransfer> inputTransfers,
-            Map<String, String> extractorTags,
-            String templateSpecText
-        ) {
+        private NodeRun(String id, String type, String action, String templateKey, String templatePath, String output, String resultFile, String source, Map<String, String> studies, Map<String, String> inputs, List<Path> inputParameterTxtPaths, Map<String, Path> inputParameterTxtPathBySlot, Path outputTxtPath) {
             this.id = id;
             this.type = type;
             this.action = action;
@@ -439,214 +363,62 @@ public class ComsolStepWorker {
             this.templatePath = templatePath;
             this.output = output;
             this.resultFile = resultFile;
+            this.source = source;
             this.studies = studies;
             this.inputs = inputs;
-            this.inputTransfers = inputTransfers;
-            this.extractorTags = extractorTags;
-            this.templateSpecText = templateSpecText;
+            this.inputParameterTxtPaths = inputParameterTxtPaths;
+            this.inputParameterTxtPathBySlot = inputParameterTxtPathBySlot;
+            this.outputTxtPath = outputTxtPath;
         }
     }
 
     private static List<NodeRun> parseNodes(String text) {
-        List<NodeRun> nodes = new ArrayList<>();
-        String array = arrayText(text, "runs");
-        if (array.isEmpty()) {
-            array = arrayText(text, "nodes");
-        }
         Map<String, String> templateSpecs = rawTopLevelObjects(objectText(text, "template_specs"));
-        for (String nodeText : splitTopLevelArrayObjects(array)) {
-            String nodeId = optionalStringValue(nodeText, "node").isEmpty() ? optionalStringValue(nodeText, "id") : optionalStringValue(nodeText, "node");
-            String nodeType = optionalStringValue(nodeText, "type").isEmpty() ? nodeId : optionalStringValue(nodeText, "type");
+        List<NodeRun> nodes = new ArrayList<>();
+        for (String nodeText : splitTopLevelArrayObjects(arrayText(text, "nodes"))) {
+            String nodeId = optionalStringValue(nodeText, "node");
+            if (nodeId.isEmpty()) nodeId = optionalStringValue(nodeText, "id");
             String templateKey = optionalStringValue(nodeText, "template");
             String specText = templateSpecs.getOrDefault(templateKey, "");
             String outputsText = objectText(specText, "outputs");
-            Map<String, String> specStudies = objectStrings(objectText(specText, "studies"));
-            Map<String, String> specExtractors = objectStrings(objectText(specText, "extractors"));
+            Map<String, String> inputPaths = objectStrings(objectText(nodeText, "input_parameter_txt_paths"));
+            List<Path> inputFiles = new ArrayList<>();
+            Map<String, Path> inputFilesBySlot = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : inputPaths.entrySet()) {
+                Path path = Path.of(entry.getValue());
+                inputFiles.add(path);
+                inputFilesBySlot.put(entry.getKey(), path);
+            }
+            String outputTxt = optionalStringValue(nodeText, "output_txt_path");
             nodes.add(
                 new NodeRun(
                     nodeId,
-                    nodeType,
+                    optionalStringValue(nodeText, "type").isEmpty() ? nodeId : optionalStringValue(nodeText, "type"),
                     stringValue(nodeText, "action"),
                     templateKey,
-                    optionalStringValue(nodeText, "template_path").isEmpty() ? optionalStringValue(specText, "path") : optionalStringValue(nodeText, "template_path"),
+                    optionalStringValue(specText, "path"),
                     optionalStringValue(nodeText, "output").isEmpty() ? ("wafer".equals(nodeId) ? "wafer_result" : "rve." + nodeId) : optionalStringValue(nodeText, "output"),
                     optionalStringValue(nodeText, "result_file").isEmpty() ? optionalStringValue(outputsText, "result_file") : optionalStringValue(nodeText, "result_file"),
-                    specStudies.isEmpty() ? objectStrings(objectText(nodeText, "studies")) : specStudies,
+                    optionalStringValue(nodeText, "source"),
+                    objectStrings(objectText(specText, "studies")),
                     objectStrings(objectText(nodeText, "inputs")),
-                    parseInputTransfers(nodeText),
-                    specExtractors.isEmpty() ? objectStrings(objectText(nodeText, "extractors")) : specExtractors,
-                    specText
+                    inputFiles,
+                    inputFilesBySlot,
+                    outputTxt.isEmpty() ? Path.of(optionalStringValue(outputsText, "txt_file")) : Path.of(outputTxt)
                 )
             );
         }
         return nodes;
     }
 
-    private static List<InputTransfer> parseInputTransfers(String nodeText) {
-        List<InputTransfer> transfers = new ArrayList<>();
-        String inputsText = objectText(nodeText, "inputs");
-        for (String slotObject : splitTopLevelObjects(inputsText)) {
-            String slot = objectKey(slotObject);
-            String rveText = objectText(slotObject, "rve");
-            String targetText = objectText(slotObject, "target");
-            if (slot.isEmpty() || rveText.isEmpty() || targetText.isEmpty()) {
-                continue;
-            }
-            String dFormat = optionalStringValue(rveText, "D_format");
-            String D_upper21 = "D_upper21";
-            if (!"symmetric_upper21".equals(dFormat)) {
-                throw new IllegalArgumentException("Input " + slot + " must use symmetric_upper21");
-            }
-            MaterialTarget material = MaterialTarget.fromJson(objectText(targetText, "material"));
-            StressTarget stress = StressTarget.fromJson(objectText(targetText, "stress"));
-            String stressText = objectText(rveText, "stress_eff");
-            transfers.add(
-                new InputTransfer(
-                    slot,
-                    stringValue(slotObject, "source"),
-                    stringValue(rveText, "rho"),
-                    stringValue(stressText, "sxx"),
-                    stringValue(stressText, "syy"),
-                    stringArray(rveText, D_upper21).toArray(new String[0]),
-                    material,
-                    stress
-                )
-            );
-        }
-        return transfers;
-    }
-
-    private static final class InputTransfer {
-        final String slot;
-        final String sourceRef;
-        final String rhoExpression;
-        final String sxxExpression;
-        final String syyExpression;
-        final String[] dUpper21Expressions;
-        final MaterialTarget material;
-        final StressTarget stress;
-
-        private InputTransfer(
-            String slot,
-            String sourceRef,
-            String rhoExpression,
-            String sxxExpression,
-            String syyExpression,
-            String[] dUpper21Expressions,
-            MaterialTarget material,
-            StressTarget stress
-        ) {
-            this.slot = slot;
-            this.sourceRef = sourceRef;
-            this.rhoExpression = rhoExpression;
-            this.sxxExpression = sxxExpression;
-            this.syyExpression = syyExpression;
-            this.dUpper21Expressions = dUpper21Expressions;
-            this.material = material;
-            this.stress = stress;
-        }
-
-        boolean hasTargets() {
-            return material != null && stress != null;
-        }
-
-        static InputTransfer fromRve(String slot, String sourceRef, RveResult rve) {
-            return new InputTransfer(
-                slot,
-                sourceRef,
-                rve.rho + "[kg/m^3]",
-                rve.sxx + "[Pa]",
-                rve.syy + "[Pa]",
-                symmetricUpper21Expressions(rve),
-                null,
-                null
-            );
-        }
-    }
-
-    private static final class MaterialTarget {
-        final String componentTag;
-        final String materialTag;
-        final String densityGroupTag;
-        final String densityPropertyName;
-        final String elasticGroupTag;
-        final String elasticPropertyName;
-
-        private MaterialTarget(
-            String componentTag,
-            String materialTag,
-            String densityGroupTag,
-            String densityPropertyName,
-            String elasticGroupTag,
-            String elasticPropertyName
-        ) {
-            this.componentTag = componentTag;
-            this.materialTag = materialTag;
-            this.densityGroupTag = densityGroupTag;
-            this.densityPropertyName = densityPropertyName;
-            this.elasticGroupTag = elasticGroupTag;
-            this.elasticPropertyName = elasticPropertyName;
-        }
-
-        static MaterialTarget fromJson(String text) {
-            if (text.isEmpty()) {
-                return null;
-            }
-            return new MaterialTarget(
-                stringValue(text, "component"),
-                stringValue(text, "tag"),
-                optionalStringValue(text, "density_group").isEmpty() ? "def" : optionalStringValue(text, "density_group"),
-                optionalStringValue(text, "density_property").isEmpty() ? "density" : optionalStringValue(text, "density_property"),
-                stringValue(text, "elastic_group"),
-                stringValue(text, "elastic_property")
-            );
-        }
-    }
-
-    private static final class StressTarget {
-        final String componentTag;
-        final String physicsTag;
-        final String parentFeatureTag;
-        final String featureTag;
-        final String propertyName;
-
-        private StressTarget(String componentTag, String physicsTag, String parentFeatureTag, String featureTag, String propertyName) {
-            this.componentTag = componentTag;
-            this.physicsTag = physicsTag;
-            this.parentFeatureTag = parentFeatureTag;
-            this.featureTag = featureTag;
-            this.propertyName = propertyName;
-        }
-
-        static StressTarget fromJson(String text) {
-            if (text.isEmpty()) {
-                return null;
-            }
-            // target.stress
-            return new StressTarget(
-                stringValue(text, "component"),
-                stringValue(text, "physics"),
-                optionalStringValue(text, "parent_feature"),
-                stringValue(text, "feature"),
-                stringValue(text, "property")
-            );
-        }
-    }
-
     private static List<Path> parameterFilesInOrder(String text) {
         Map<String, String> paths = objectStrings(objectText(text, "parameter_txt_paths"));
         List<Path> files = new ArrayList<>();
         for (String key : stringArray(text, "parameter_txt_order")) {
-            if (!paths.containsKey(key)) {
-                throw new IllegalArgumentException("Missing parameter_txt_paths entry for " + key);
-            }
+            if (!paths.containsKey(key)) throw new IllegalArgumentException("Missing parameter_txt_paths entry for " + key);
             files.add(Path.of(paths.get(key)));
         }
-        if (files.isEmpty()) {
-            for (String value : paths.values()) {
-                files.add(Path.of(value));
-            }
-        }
+        if (files.isEmpty()) for (String value : paths.values()) files.add(Path.of(value));
         return files;
     }
 
@@ -661,17 +433,9 @@ public class ComsolStepWorker {
             this.manifest = manifest;
         }
 
-        static NodeResult rve(RveResult rve, ManifestEntry manifest) {
-            return new NodeResult(rve, null, manifest);
-        }
-
-        static NodeResult wafer(WaferResult wafer, ManifestEntry manifest) {
-            return new NodeResult(null, wafer, manifest);
-        }
-
-        static NodeResult skipped(ManifestEntry manifest) {
-            return new NodeResult(null, null, manifest);
-        }
+        static NodeResult rve(RveResult rve, ManifestEntry manifest) { return new NodeResult(rve, null, manifest); }
+        static NodeResult wafer(WaferResult wafer, ManifestEntry manifest) { return new NodeResult(null, wafer, manifest); }
+        static NodeResult skipped(ManifestEntry manifest) { return new NodeResult(null, null, manifest); }
     }
 
     private static final class ManifestEntry {
@@ -689,21 +453,12 @@ public class ComsolStepWorker {
             this.output = output;
         }
 
-        static ManifestEntry ran(NodeRun node, String sourceStep) {
-            return new ManifestEntry(node.action, "success", node.templateKey, sourceStep, node.output);
-        }
-
-        static ManifestEntry inherited(NodeRun node, String sourceStep) {
-            return new ManifestEntry(node.action, "success", node.templateKey, sourceStep, node.output);
-        }
-
-        static ManifestEntry skipped(NodeRun node) {
-            return new ManifestEntry(node.action, "skipped", node.templateKey, "", node.output);
-        }
+        static ManifestEntry ran(NodeRun node, String sourceStep) { return new ManifestEntry(node.action, "success", node.templateKey, sourceStep, node.output); }
+        static ManifestEntry inherited(NodeRun node, String sourceStep) { return new ManifestEntry(node.action, "success", node.templateKey, sourceStep, node.output); }
+        static ManifestEntry skipped(NodeRun node) { return new ManifestEntry(node.action, "skipped", node.templateKey, "", node.output); }
 
         String toJson() {
-            return "{"
-                + "\"action\":" + json(action)
+            return "{\"action\":" + json(action)
                 + ",\"status\":" + json(status)
                 + ",\"template\":" + json(template == null ? "" : template)
                 + ",\"source_step\":" + json(sourceStep)
@@ -715,6 +470,7 @@ public class ComsolStepWorker {
     private static final class RveResult {
         String sourceStep = "";
         String sourceModel = "";
+        String sourceNode = "";
         final boolean valid;
         final boolean active;
         final double rho;
@@ -731,10 +487,18 @@ public class ComsolStepWorker {
             this.d = d;
         }
 
+        RveResult copy() {
+            RveResult copied = new RveResult(valid, active, rho, sxx, syy, d);
+            copied.sourceStep = sourceStep;
+            copied.sourceModel = sourceModel;
+            copied.sourceNode = sourceNode;
+            return copied;
+        }
+
         static RveResult fromJson(String text) {
             RveResult rve = new RveResult(
-                booleanValue(text, "valid"),
-                booleanValue(text, "active"),
+                booleanValue(text, "valid", true),
+                booleanValue(text, "active", true),
                 doubleValue(text, "rho", 0.0),
                 doubleValue(objectText(text, "stress_eff"), "sxx", 0.0),
                 doubleValue(objectText(text, "stress_eff"), "syy", 0.0),
@@ -742,15 +506,16 @@ public class ComsolStepWorker {
             );
             rve.sourceStep = optionalStringValue(text, "source_step");
             rve.sourceModel = optionalStringValue(text, "source_model");
+            rve.sourceNode = optionalStringValue(text, "source_node");
             return rve;
         }
 
         String toJson() {
-            return "{"
-                + "\"valid\":" + valid
+            return "{\"valid\":" + valid
                 + ",\"active\":" + active
                 + ",\"source_step\":" + json(sourceStep)
                 + ",\"source_model\":" + json(sourceModel)
+                + ",\"source_node\":" + json(sourceNode)
                 + ",\"rho\":" + rho
                 + ",\"stress_eff\":{\"sxx\":" + sxx + ",\"syy\":" + syy + "}"
                 + ",\"D\":" + matrixToJson(d)
@@ -774,9 +539,7 @@ public class ComsolStepWorker {
 
         static WaferResult fromStateOrSkipped(String stateText) {
             String wafer = objectText(stateText, "wafer_result");
-            if (wafer.isEmpty()) {
-                return skipped();
-            }
+            if (wafer.isEmpty()) return skipped();
             return new WaferResult(
                 doubleValue(wafer, "bow_x_um", 0.0),
                 doubleValue(wafer, "bow_y_um", 0.0),
@@ -789,9 +552,7 @@ public class ComsolStepWorker {
             return "{\"bow_x_um\":" + bowX + ",\"bow_y_um\":" + bowY + ",\"kx\":" + kx + ",\"ky\":" + ky + "}";
         }
 
-        static WaferResult skipped() {
-            return new WaferResult(0.0, 0.0, 0.0, 0.0);
-        }
+        static WaferResult skipped() { return new WaferResult(0.0, 0.0, 0.0, 0.0); }
     }
 
     private static String objectKey(String text) {
@@ -801,26 +562,18 @@ public class ComsolStepWorker {
 
     private static String objectText(String text, String key) {
         int keyIndex = text.indexOf("\"" + key + "\"");
-        if (keyIndex < 0) {
-            return "";
-        }
+        if (keyIndex < 0) return "";
         int start = text.indexOf("{", keyIndex);
-        if (start < 0) {
-            return "";
-        }
+        if (start < 0) return "";
         int end = matchingIndex(text, start, '{', '}');
         return end < 0 ? "" : text.substring(start + 1, end);
     }
 
     private static String arrayText(String text, String key) {
         int keyIndex = text.indexOf("\"" + key + "\"");
-        if (keyIndex < 0) {
-            return "";
-        }
+        if (keyIndex < 0) return "";
         int start = text.indexOf("[", keyIndex);
-        if (start < 0) {
-            return "";
-        }
+        if (start < 0) return "";
         int end = matchingIndex(text, start, '[', ']');
         return end < 0 ? "" : text.substring(start + 1, end);
     }
@@ -831,28 +584,14 @@ public class ComsolStepWorker {
         boolean escaped = false;
         for (int i = start; i < text.length(); i++) {
             char ch = text.charAt(i);
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (ch == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (ch == '"') {
-                inString = !inString;
-                continue;
-            }
-            if (inString) {
-                continue;
-            }
-            if (ch == open) {
-                depth++;
-            } else if (ch == close) {
+            if (escaped) { escaped = false; continue; }
+            if (ch == '\\') { escaped = true; continue; }
+            if (ch == '"') { inString = !inString; continue; }
+            if (inString) continue;
+            if (ch == open) depth++;
+            else if (ch == close) {
                 depth--;
-                if (depth == 0) {
-                    return i;
-                }
+                if (depth == 0) return i;
             }
         }
         return -1;
@@ -863,13 +602,9 @@ public class ComsolStepWorker {
         int index = 0;
         while (index < text.length()) {
             int start = text.indexOf("{", index);
-            if (start < 0) {
-                break;
-            }
+            if (start < 0) break;
             int end = matchingIndex(text, start, '{', '}');
-            if (end < 0) {
-                break;
-            }
+            if (end < 0) break;
             values.add(text.substring(start, end + 1));
             index = end + 1;
         }
@@ -881,13 +616,9 @@ public class ComsolStepWorker {
         Matcher matcher = Pattern.compile("\"([^\"]+)\"\\s*:").matcher(text);
         while (matcher.find()) {
             int start = text.indexOf("{", matcher.end());
-            if (start < 0) {
-                continue;
-            }
+            if (start < 0) continue;
             int end = matchingIndex(text, start, '{', '}');
-            if (end < 0) {
-                continue;
-            }
+            if (end < 0) continue;
             values.add(text.substring(matcher.start(), end + 1));
             matcher.region(end + 1, text.length());
         }
@@ -898,10 +629,7 @@ public class ComsolStepWorker {
         Map<String, String> values = new LinkedHashMap<>();
         for (String object : splitTopLevelObjects(text)) {
             String key = objectKey(object);
-            if (!key.isEmpty()) {
-                int start = object.indexOf("{");
-                values.put(key, object.substring(start));
-            }
+            if (!key.isEmpty()) values.put(key, object.substring(object.indexOf("{")));
         }
         return values;
     }
@@ -909,9 +637,7 @@ public class ComsolStepWorker {
     private static Map<String, String> objectStrings(String text) {
         Map<String, String> values = new LinkedHashMap<>();
         Matcher matcher = Pattern.compile("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"").matcher(text);
-        while (matcher.find()) {
-            values.put(matcher.group(1), matcher.group(2));
-        }
+        while (matcher.find()) values.put(matcher.group(1), matcher.group(2));
         return values;
     }
 
@@ -920,18 +646,14 @@ public class ComsolStepWorker {
         List<String> values = new ArrayList<>();
         if (matcher.find()) {
             Matcher item = Pattern.compile("\"([^\"]+)\"").matcher(matcher.group(1));
-            while (item.find()) {
-                values.add(item.group(1));
-            }
+            while (item.find()) values.add(item.group(1));
         }
         return values;
     }
 
     private static String stringValue(String text, String key) {
         String value = optionalStringValue(text, key);
-        if (value.isEmpty()) {
-            throw new IllegalArgumentException("Missing JSON string key: " + key);
-        }
+        if (value.isEmpty()) throw new IllegalArgumentException("Missing JSON string key: " + key);
         return value;
     }
 
@@ -940,12 +662,9 @@ public class ComsolStepWorker {
         return matcher.find() ? matcher.group(1) : "";
     }
 
-    private static boolean booleanValue(String text, String key) {
+    private static boolean booleanValue(String text, String key, boolean fallback) {
         Matcher matcher = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*(true|false)").matcher(text);
-        if (!matcher.find()) {
-            throw new IllegalArgumentException("Missing JSON boolean key: " + key);
-        }
-        return Boolean.parseBoolean(matcher.group(1));
+        return matcher.find() ? Boolean.parseBoolean(matcher.group(1)) : fallback;
     }
 
     private static double doubleValue(String text, String key, double fallback) {
@@ -967,19 +686,29 @@ public class ComsolStepWorker {
     private static String matrixToJson(double[][] matrix) {
         StringBuilder builder = new StringBuilder("[");
         for (int row = 0; row < matrix.length; row++) {
-            if (row > 0) {
-                builder.append(",");
-            }
+            if (row > 0) builder.append(",");
             builder.append("[");
             for (int col = 0; col < matrix[row].length; col++) {
-                if (col > 0) {
-                    builder.append(",");
-                }
+                if (col > 0) builder.append(",");
                 builder.append(matrix[row][col]);
             }
             builder.append("]");
         }
         builder.append("]");
         return builder.toString();
+    }
+
+    private static String objectJsonOrEmpty(String text, String key) {
+        String object = objectText(text, key);
+        return object.isEmpty() ? "{}" : "{" + object + "}";
+    }
+
+    private static String json(String value) {
+        if (value == null) return "\"\"";
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String sanitize(String value) {
+        return value == null ? "" : value.replaceAll("[^A-Za-z0-9_]", "_");
     }
 }

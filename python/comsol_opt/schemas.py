@@ -48,8 +48,6 @@ class WaferState:
     step_id: str
     step_name: str
     wafer_result: Dict[str, float]
-    device_rves: Dict[str, Dict[str, Any]]
-    wafer_inputs: Dict[str, Dict[str, Any]]
     rve: Dict[str, Dict[str, Any]]
     materials_state: Dict[str, Any]
     geometry_state: Dict[str, Any]
@@ -70,16 +68,10 @@ class WaferState:
         rve_map = data.get("rve", {})
         for name, rve in rve_map.items():
             RveResult.from_dict(rve)
-        for name, rve in data.get("device_rves", {}).items():
-            RveResult.from_dict(rve)
-        for name, rve in data.get("wafer_inputs", {}).items():
-            RveResult.from_dict(rve)
         return cls(
             step_id=str(data["step_id"]),
             step_name=str(data["step_name"]),
             wafer_result={key: float(value) for key, value in data["wafer_result"].items()},
-            device_rves=dict(data.get("device_rves", {})),
-            wafer_inputs=dict(data.get("wafer_inputs", {})),
             rve=dict(rve_map),
             materials_state=dict(data["materials_state"]),
             geometry_state=dict(data["geometry_state"]),
@@ -94,11 +86,7 @@ class StepInput:
     process_type: str
     update_rule: str
     templates: Dict[str, Any]
-    run_devices: List[Dict[str, Any]]
-    run_mats: List[str]
-    mat_inputs: Dict[str, str]
     run_wafer: bool
-    wafer_inputs: Dict[str, List[str]]
     parameters: Dict[str, Any]
     parameter_txt_paths: Dict[str, str]
     state_in: Path
@@ -119,27 +107,16 @@ class StepInput:
             "state_in",
             "output_dir",
         ]
-        required = list(base_required)
-        if "nodes" not in data:
-            required.extend(["run_devices", "run_mats", "mat_inputs", "wafer_inputs"])
-        missing = [key for key in required if key not in data]
+        missing = [key for key in base_required if key not in data]
         if missing:
             raise ValueError(f"StepInput missing keys: {missing}")
-        if "nodes" not in data:
-            for key in ("struct", "stress", "temp"):
-                if key not in data["parameter_txt_paths"]:
-                    raise ValueError(f"StepInput.parameter_txt_paths missing {key}")
         return cls(
             step_id=str(data["step_id"]),
             step_name=str(data["step_name"]),
             process_type=str(data["process_type"]),
             update_rule=str(data["update_rule"]),
             templates=dict(data["templates"]),
-            run_devices=list(data.get("run_devices", [])),
-            run_mats=list(data.get("run_mats", [])),
-            mat_inputs=dict(data.get("mat_inputs", {})),
             run_wafer=bool(data["run_wafer"]),
-            wafer_inputs=dict(data.get("wafer_inputs", {})),
             parameters=dict(data["parameters"]),
             parameter_txt_paths=dict(data["parameter_txt_paths"]),
             state_in=Path(data["state_in"]),

@@ -40,7 +40,7 @@ def matrix_to_upper21(matrix):
 
 def upper21_to_matrix(values):
     if not isinstance(values, list) or len(values) != 21:
-        raise ValueError("D_upper21 must contain exactly 21 values")
+        raise ValueError("upper-triangular D payload must contain exactly 21 values")
     matrix = [[0.0] * 6 for _ in range(6)]
     index = 0
     for row in range(6):
@@ -50,20 +50,6 @@ def upper21_to_matrix(values):
             matrix[col][row] = value
             index += 1
     return matrix
-
-
-def rve_payload_for_java(rve):
-    _validate_matrix6x6(rve["D"])
-    return {
-        "rho": f"{float(rve['rho'])}[kg/m^3]",
-        "stress_eff": {
-            "sxx": f"{float(rve['stress_eff']['sxx'])}[Pa]",
-            "syy": f"{float(rve['stress_eff']['syy'])}[Pa]",
-        },
-        "D_format": "symmetric_upper21",
-        "elasticity_order": rve.get("elasticity_order", "standard"),
-        "D_upper21": [f"{value}[Pa]" for value in matrix_to_upper21(rve["D"])],
-    }
 
 
 def canonical_ref_name(ref):

@@ -94,9 +94,9 @@ def load_base_params(params_path, flow_path, repo_root):
     if params_path is not None:
         return load_config(params_path)
     flow = load_flow_definition(flow_path, repo_root)
-    if flow.get("layout") in {"layered_dag", "v2"} and flow["steps"]:
+    if flow.get("layout") == "v2" and flow["steps"]:
         return copy_params(flow["steps"][0]["parameters"])
-    raise ValueError("params_path is required for legacy flow configs")
+    raise ValueError("Only v2 params-txt-driven flow configs are supported")
 
 
 def deterministic_trial_params(base_params, specs, trial_index, seed):
@@ -404,7 +404,6 @@ def _run_stage_trial(
         runs_root=trial_dir,
         repo_root=trial_repo_root,
         use_cache=True,
-        parameter_map_path=None,
         cache_root=stage_dir / ".cache",
     )
     summary_path = result["run_dir"] / "summary.csv"
@@ -472,7 +471,6 @@ def run_quick_calibration(
             runs_root=trial_dir,
             repo_root=trial_repo_root,
             use_cache=True,
-            parameter_map_path=None,
             cache_root=calib_dir / ".cache",
         )
         summary_path = result["run_dir"] / "summary.csv"
@@ -564,7 +562,6 @@ def run_optuna_or_fallback_calibration(
             runs_root=trial_dir,
             repo_root=trial_repo_root,
             use_cache=True,
-            parameter_map_path=None,
             cache_root=calib_dir / ".cache",
         )
         summary_path = result["run_dir"] / "summary.csv"

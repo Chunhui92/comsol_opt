@@ -1,7 +1,7 @@
 # 20步 COMSOL 晶圆翘曲自动仿真链开发方案
 
-> Version: v2.0  
-> Date: 2026-06-05  
+> Version: v2.1  
+> Date: 2026-06-09  
 > Status: Development Spec for Codex  
 > Scope: 只实现 20 步工艺自动仿真流程，不实现参数校准、loss、Optuna。  
 > Backend target: `dryrun` / `mock` / `comsol` 三后端统一接口。  
@@ -16,8 +16,9 @@
 - canonical 节点名固定为 `pillar`、`sc`、`decap1`、`decap2`、`decap3`、`fecap`、`die`、`wafer`、`onon`。
 - 本文档正文中出现的 `mat1/mat2/mat3/mat4`、`onon_device`、`device_main/device_aux` 是开发过程中的历史/COMSOL 原始术语；新代码和 active YAML 不再使用这些名字作为运行时节点。
 - `mat1 -> decap1`，`mat2 -> decap2`，`mat3 -> decap3`，`mat4 -> fecap`，`onon_device -> onon`。
-- Java 输入不再展开重复的 6x6 对称矩阵元素；Python 在 `step_input.json` 中同时保留完整 `D` 和紧凑 `D_upper21`，供 COMSOL 6.3 worker 写入指定材料/应力 tag。
-- 每个 step 输出 `logs/step.log`，用于审计模型、RVE 来源、接口 tag、node 输出和 wafer bow。
+- COMSOL 接口已切换为参数 TXT 驱动：Python 为上游 RVE 写出 `inputs/<node>_<slot>.txt`，Java 只按顺序 `model.param().loadFile(...)` 参数文件、运行 study、解析 COMSOL 导出的结果 TXT。
+- `step_input.json` 不再内联 RVE 大 payload，也不维护 material/stress/lemm/property group 等 COMSOL 内部 tag；运行节点只记录 template、study tag、输入参数 TXT 路径、输出 TXT 路径和 result JSON 约定。
+- 每个 step 输出 `logs/step.log` 和 `logs/interface.json`，用于审计模型、RVE 来源、参数 TXT、slot 变量前缀、node 输出和 wafer bow。
 
 ---
 
@@ -65,7 +66,7 @@ S01 ~ S20 process step
 - 没有更新的节点继承上一步有效 RVE。
 - `onon_device` 不是独立 COMSOL 模型，而是指定某个 pillar 模型结果作为 wafer 级输入。
 - stress 只保存和传递 `sxx`、`syy`，不要 `szz/sxy/syz/sxz`。
-- 是否提取 D6x6 不靠 `only_stress` 标签，而由 COMSOL `study_cp` / extractor 配置决定。
+- 是否输出 D6x6 由 COMSOL 模型导出的结果 TXT 决定；若结果 TXT 不含 D，则沿用上一有效 RVE 的 D。
 - 若某模型只有 stress study、没有 CP study，则本步只更新 `stress_eff` 和 `rho`，`D` 从上一步同节点状态继承。
 
 ---
@@ -79,11 +80,11 @@ repo/
 ├── configs/
 │   ├── flow.yaml
 │   ├── templates.yaml
-│   ├── extractors.yaml              # 可选：若希望模板和 extractor 分离
 │   ├── params/
 │   │   ├── global.txt
 │   │   ├── materials.txt
-│   │   └── process.txt
+│   │   ├── process.txt
+│   │   └── rve_transfer_template.txt
 │   └── steps/
 │       ├── S01_w_plug_cmp.yaml
 │       ├── S02_onon_dep.yaml
@@ -95,20 +96,15 @@ repo/
 │   ├── run_flow.py
 │   └── comsol_opt/
 │       ├── flow_runner.py
-│       ├── state_manager.py
-│       ├── backend_base.py
-│       ├── backend_dryrun.py
-│       ├── backend_mock.py
-│       ├── backend_comsol.py
-│       ├── step_validator.py
+│       ├── step_input.py
+│       ├── backends.py
+│       ├── mock_comsol_worker.py
+│       ├── rve_txt.py
+│       ├── v2_contract.py
 │       └── config_io.py
 │
 ├── java/
 │   ├── ComsolStepWorker.java
-│   ├── RveResult.java
-│   ├── TransferData.java
-│   ├── ComsolChainUtils.java
-│   └── JsonParser.java
 │
 ├── models/
 │   └── process_models/
@@ -399,193 +395,83 @@ state_out.json 中每个 active/valid RVE 都必须是下游可直接使用的�
 
 ## 8. COMSOL 模型接口信息
 
-本节记录当前已知的实际 COMSOL 模型路径、component、physics、study 和特殊接口。
+当前实现不再让 Python/Java 维护 COMSOL 材料、物理场、feature、property group 等内部标签。COMSOL 模型内部已经把材料属性引用到固定参数变量上，因此 active 配置只维护：
 
-### 8.1 cap / mat 模型接口
+- template key；
+- `.mph` 模型路径；
+- node type；
+- stress study tag 与可选 CP study tag；
+- 输入 slot；
+- 输出 TXT 与 result JSON 约定。
 
-根据本地 `cap_model_tags.json` 与 `die_model_tags.json` 汇总，mat1-4 映射如下：
+`configs/templates.yaml` 是唯一 active template registry。历史 extractor/tag registry 已归档到 `archive/legacy_config_scheme/`，不再参与 active flow。
 
-| node | 物理名称 | cap_source | .mph 文件 | component | physics | stress study | CP study | 输入 |
-|---|---|---|---|---|---|---|---|---|
-| `mat1` | decap1st1 | decap1st / decap11 | `decap_model_all.mph` | `comp6` | `solid6` | `std3` | `solid6cp1std` | `pillar` |
-| `mat2` | decap2 | decap2nd / decap2 | `decap_model_all.mph` | `comp5` | `solid5` | `std1` | `solid5cp1std` | `pillar` |
-| `mat3` | decap1st3 | decap1st3 / decap13 | `decap_model_all.mph` | `comp7` | `solid4` | `std2` | `solid4cp1std` | `pillar` |
-| `mat4` | fecap | fecap | `fecap_model_all.mph` | `comp8` | `solid8` | `std4` | `solid8cp1std` | `pillar + sc` |
+### 8.1 输入链路
 
-特殊变体：
-
-| step | 模型 | 说明 |
-|---|---|---|
-| S03 | `p03_decap_model_DTI_etch.mph` | 包含 `mat1/mat2/mat3`，无 `mat4/fecap`。S03 的 mat4 使用 S02 默认 RVE 或上一有效状态。 |
-| S16 | `fecap_model_all.mph` / `feslit_etch` | 无 CP study，只更新 `stress_eff.sxx/syy` 与 `rho`，`D` 继承上一有效 mat4。 |
-
-### 8.2 pillar 模型接口
-
-已知 20 步工艺中 pillar 模型名如下。实际 component、physics、study、extractor 标签应写入 `configs/templates.yaml`，不要硬编码在 Java 里。
-
-| step | node | template key 建议 | .mph / 模型名 | 说明 |
-|---|---|---|---|---|
-| S02 | `pillar` | `p02_pillar_ONONdep` | `p02_pillar_ONONdep` / `p02_pillar_model_ONONdep.mph` | ONON dep，生成 S02 默认 RVE 和 `onon_device` |
-| S03 | `pillar` | `p03_pillar_SCDTI` | `p03_pillar_SCDTI` | DTI etch 后 pillar |
-| S06 | `pillar` | `p04p01_pillar_etch` | `p04p01_pillar_etch` | pillar etch |
-| S07 | `pillar` | `p04p02_pillar_aldOx` | `p04p02_pillar_aldOx` | SAC oxide dep |
-| S08 | `pillar` | `p04p03_pillar_TiN` | `p04p03_pillar_TiN` | ALD SAC TiN |
-| S09 | `pillar` | `p04p04_pillar_NbO` | `p04p04_pillar_NbO` | NbO dep |
-| S10 | `pillar` | `p04p05_pillar_TiN2` | `p04p05_pillar_TiN2` | second ALD TiN |
-| S11 | `pillar` | `p04p06_pillar_W` | `p04p06_pillar_W` | pillar W CMP |
-| S15 | `pillar` | `p06p01_pillar_Feslit` | `p06p01_pillar_Feslit` | feslit ASI dep |
-| S16 | `pillar` | `p06p02_pillar_feslit_etch` | 若实际无 pillar 模型则改为对应 S16 pillar/feslit 模板 | S16 起全链 run |
-| S17 | `pillar` | `p06p02_pillar_SiNrmv` | `p06p02_pillar_SiNrmv` | SiN removal |
-| S18 | `pillar` | `p06p03_pillar_SACoxrmv` | `p06p03_pillar_SACoxrmv` | SAC oxide removal |
-| S19 | `pillar` | `p06p04_pillar_metaldep` | `p06p04_pillar_metaldep` | W recess / metal dep |
-| S20 | `pillar` | `p06p04_or_final_pillar` | 若 S20 无独立 pillar 模型，可复用 S19 或配置 final pillar 模板 | S20 要全链 run，需配置明确模板 |
-
-待由本地脚本补全字段：
-
-```yaml
-component: <pillar component tag>
-physics: <pillar solid physics tag>
-studies:
-  stress: <stress study tag>
-  cp: <cell periodicity study tag or null>
-extractors:
-  rho: <rho evaluator tag>
-  stress: <volume average stress tag>
-  D: <global matrix evaluation tag or null>
-```
-
-### 8.3 SC 模型接口
-
-| step | node | template key 建议 | .mph / 模型名 | 输入 | 输出 |
-|---|---|---|---|---|---|
-| S04 | `sc` | `p03_SC_form` | `p03_SC_form` | 可接收上一 `sc` 或默认 RVE | `sc` RVE，后续供 `mat4/fecap` 使用 |
-
-SC 与 pillar 类似，是 fecap 的上游输入。`mat4/fecap` 必须接收：
+Python 在每个 step 目录生成 RVE 输入参数 TXT：
 
 ```text
-pillar + sc
+runs/<run_id>/<step>/inputs/<node>_<slot>.txt
 ```
 
-### 8.4 die 模型接口
-
-| node | template key 建议 | .mph 文件 | 输入 | 输出 |
-|---|---|---|---|---|
-| `die` | `die_model` | `die_model.mph` | `mat1 + mat2 + mat3 + mat4` | `die` RVE |
-
-待由本地脚本补全字段：
-
-```yaml
-component: <die component tag>
-physics: <die solid physics tag>
-studies:
-  stress: <die stress study tag>
-  cp: <die CP study tag or null>
-extractors:
-  rho: <rho evaluator tag>
-  stress: <volume average stress tag>
-  D: <global matrix evaluation tag or null>
-```
-
-### 8.5 wafer 模型接口
-
-| step | node | template key 建议 | .mph / 模型名 | 输入 | 输出 |
-|---|---|---|---|---|---|
-| S01 | `wafer` | `p01_wafer_init` | `p01_wafer_init.mph` | 初始参数 | bow_x/bow_y |
-| S02 | `wafer` | `p02_wafer_ONONdep` | `p02_wafer_ONONdep.mph` | `die` 默认 RVE + `onon_device` | bow_x/bow_y |
-| S03-S20 | `wafer` | `wafer_warp_model` 或步骤专用 wafer 模板 | `wafer_warp_model.mph` | `die + onon_device` | bow_x/bow_y，TXT/PNG |
-
-wafer 模型只接收：
+Java 对每个 run node 按顺序加载：
 
 ```text
-die + onon_device
+parameter_txt_order 中的全局/校准参数 TXT
+input_parameter_txt_paths 中的上游 RVE 参数 TXT
 ```
 
-不要直接把 mat1-4、pillar、sc 注入 wafer，除非某个 wafer 模板明确要求。
+对于同一步内刚生成的上游 RVE，Python 可先在 `step_input.json` 中声明目标路径，Java/mock worker 在上游 node 完成后写出对应 TXT，再供下游 node 加载。
+
+### 8.2 输出链路
+
+COMSOL 模型把当前节点结果导出为 `output_txt_path`：
+
+```text
+rho
+sxx
+syy
+D11 ... D66
+```
+
+wafer 输出 TXT 使用：
+
+```text
+bow_x_um
+bow_y_um
+kx
+ky
+```
+
+Java 解析输出 TXT 后写节点 result JSON，并更新 `state_out.json`。若 RVE 输出 TXT 不含 D，Python/Java 合并时保留上一有效状态的 D。
 
 ---
 
-## 9. 参数注入命名规范
+## 9. 参数 TXT 命名规范
 
-所有 RVE 输入由 Java 按 slot 注入 COMSOL 参数。slot 由 step YAML 的 inputs 声明决定。
+RVE 输入固定使用 slot 前缀变量名。slot 由 step YAML 的 `inputs` 声明决定。
 
 ### 9.1 通用参数格式
 
 ```text
-input_<slot>_rho
-input_<slot>_sxx
-input_<slot>_syy
-input_<slot>_D11 ... input_<slot>_D66
+rve_<slot>_rho
+rve_<slot>_sxx
+rve_<slot>_syy
+rve_<slot>_D11 ... rve_<slot>_D66
 ```
 
-不注入：
+D 矩阵只传 6x6 对称矩阵的 21 个上三角值，顺序固定为：
 
 ```text
-input_<slot>_szz
-input_<slot>_sxy
-input_<slot>_syz
-input_<slot>_sxz
+D11, D12, D13, D14, D15, D16,
+D22, D23, D24, D25, D26,
+D33, D34, D35, D36,
+D44, D45, D46,
+D55, D56,
+D66
 ```
 
-### 9.2 decap 输入 pillar
-
-```text
-input_pillar_rho
-input_pillar_sxx
-input_pillar_syy
-input_pillar_D11 ... input_pillar_D66
-```
-
-### 9.3 fecap 输入 pillar + sc
-
-```text
-input_pillar_rho
-input_pillar_sxx
-input_pillar_syy
-input_pillar_D11 ... input_pillar_D66
-
-input_sc_rho
-input_sc_sxx
-input_sc_syy
-input_sc_D11 ... input_sc_D66
-```
-
-### 9.4 die 输入 mat1-4
-
-```text
-input_mat1_rho
-input_mat1_sxx
-input_mat1_syy
-input_mat1_D11 ... input_mat1_D66
-
-input_mat2_rho
-input_mat2_sxx
-input_mat2_syy
-input_mat2_D11 ... input_mat2_D66
-
-input_mat3_rho
-input_mat3_sxx
-input_mat3_syy
-input_mat3_D11 ... input_mat3_D66
-
-input_mat4_rho
-input_mat4_sxx
-input_mat4_syy
-input_mat4_D11 ... input_mat4_D66
-```
-
-### 9.5 wafer 输入 die + onon_device
-
-```text
-input_die_rho
-input_die_sxx
-input_die_syy
-input_die_D11 ... input_die_D66
-
-input_onon_rho
-input_onon_sxx
-input_onon_syy
-input_onon_D11 ... input_onon_D66
-```
+不传输 `szz/sxy/syz/sxz`。`configs/params/rve_transfer_template.txt` 是默认变量名示例和测试夹具；如果真实模型变量名后续需要调整，只改 TXT/template mapping，不恢复 COMSOL 内部 tag 注入。
 
 ---
 
@@ -667,185 +553,56 @@ runtime:
 
 ## 12. templates.yaml 示例
 
-下面是模板 registry 的建议结构。Codex 开发时应支持该结构，而不是在 Java 中硬编码路径和标签。
+Active template registry 只描述模型、node type、study 和输出文件约定。COMSOL 内部材料/物理场/feature 接口由模型内部参数引用承担，不进入 active YAML。
 
 ```yaml
 templates:
-  p01_wafer_init:
-    path: models/process_models/p01_wafer_init.mph
-    node_type: wafer
-    component: null
-    physics: null
-    studies:
-      stress: std1
-      cp: null
-    extractors:
-      bow_x: wafer_bow_x
-      bow_y: wafer_bow_y
-      rho: null
-      stress: null
-      D: null
-    exports:
-      txt: true
-      png: true
-
-  p02_pillar_ONONdep:
-    path: models/process_models/pillar_models/p02_pillar_model_ONONdep.mph
-    node_type: pillar
-    component: TODO_PILLAR_COMPONENT
-    physics: TODO_PILLAR_PHYSICS
-    studies:
-      stress: TODO_PILLAR_STRESS_STUDY
-      cp: TODO_PILLAR_CP_STUDY
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  p03_cap_DTI_mat1:
-    path: models/process_models/cap_models/p03_decap_model_DTI_etch.mph
-    node_type: mat1
-    component: comp6
-    physics: solid6
-    studies:
-      stress: std3
-      cp: solid6cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  p03_cap_DTI_mat2:
-    path: models/process_models/cap_models/p03_decap_model_DTI_etch.mph
-    node_type: mat2
-    component: comp5
-    physics: solid5
-    studies:
-      stress: std1
-      cp: solid5cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  p03_cap_DTI_mat3:
-    path: models/process_models/cap_models/p03_decap_model_DTI_etch.mph
-    node_type: mat3
-    component: comp7
-    physics: solid4
-    studies:
-      stress: std2
-      cp: solid4cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  decap_model_mat1:
-    path: models/process_models/cap_models/decap_model_all.mph
-    node_type: mat1
-    component: comp6
-    physics: solid6
-    studies:
-      stress: std3
-      cp: solid6cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  decap_model_mat2:
-    path: models/process_models/cap_models/decap_model_all.mph
-    node_type: mat2
-    component: comp5
-    physics: solid5
-    studies:
-      stress: std1
-      cp: solid5cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  decap_model_mat3:
-    path: models/process_models/cap_models/decap_model_all.mph
-    node_type: mat3
-    component: comp7
-    physics: solid4
-    studies:
-      stress: std2
-      cp: solid4cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
   fecap_model_all:
     path: models/process_models/cap_models/fecap_model_all.mph
-    node_type: mat4
-    component: comp8
-    physics: solid8
+    node_type: fecap
     studies:
       stress: std4
       cp: solid8cp1std
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
-
-  fecap_feslit_etch:
-    path: models/process_models/cap_models/fecap_model_all.mph
-    node_type: mat4
-    component: comp8
-    physics: solid8
-    studies:
-      stress: std4
-      cp: null
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: null
+    outputs:
+      result_file: fecap_rve.json
+      txt_file: fecap_rve.txt
 
   p03_SC_form:
     path: models/process_models/sc_models/p03_SC_form.mph
     node_type: sc
-    component: TODO_SC_COMPONENT
-    physics: TODO_SC_PHYSICS
     studies:
-      stress: TODO_SC_STRESS_STUDY
-      cp: TODO_SC_CP_STUDY
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
+      stress: std1
+      cp: cp1
+    outputs:
+      result_file: sc_rve.json
+      txt_file: sc_rve.txt
 
   die_model:
     path: models/process_models/die_model.mph
     node_type: die
-    component: TODO_DIE_COMPONENT
-    physics: TODO_DIE_PHYSICS
     studies:
-      stress: TODO_DIE_STRESS_STUDY
-      cp: TODO_DIE_CP_STUDY
-    extractors:
-      rho: TODO_RHO_EVAL
-      stress: TODO_STRESS_AVERAGE
-      D: TODO_D_MATRIX_EVAL
+      stress: std1
+      cp: cp1
+    outputs:
+      result_file: die_rve.json
+      txt_file: die_rve.txt
 
   wafer_warp_model:
     path: models/process_models/wafer_warp_model.mph
     node_type: wafer
-    component: TODO_WAFER_COMPONENT
-    physics: TODO_WAFER_PHYSICS
     studies:
-      stress: TODO_WAFER_STUDY
+      stress: std1
       cp: null
-    extractors:
-      bow_x: TODO_BOW_X_EVAL
-      bow_y: TODO_BOW_Y_EVAL
-    exports:
-      txt: true
-      png: true
+    outputs:
+      result_file: wafer_result.json
+      txt_file: wafer_result.txt
+
+template_families:
+  decap_model:
+    members:
+      decap1: decap_model_decap1
+      decap2: decap_model_decap2
+      decap3: decap_model_decap3
 ```
 
 ---
@@ -1187,11 +944,11 @@ Java 负责：
 2. 对每个 run node：
    - 加载 `.mph` 模板；
    - 按 `parameter_txt_order` 加载参数 TXT；
-   - 将上游 RVE 注入 COMSOL 参数；
+   - 按 `input_parameter_txt_paths` 加载上游 RVE 参数 TXT；
    - 运行 stress study；
    - 如果 `study_cp != null`，运行 CP study；
-   - 提取 `rho`、`stress_eff.sxx/syy`、`D6x6`；
-   - 对 wafer 提取 `bow_x/bow_y` 并导出 TXT/PNG；
+   - 解析 COMSOL 导出的 RVE output TXT；
+   - 对 wafer 解析 `bow_x_um/bow_y_um/kx/ky` output TXT；
    - 写 node result。
 3. 写 `manifest.json`。
 4. 释放 COMSOL model。
@@ -1215,36 +972,43 @@ Java 不负责：
 {
   "step_id": "S04",
   "step_name": "sc_etch",
-  "run_dir": "runs/dev_20step/S04_sc_etch",
+  "output_dir": "runs/dev_20step/S04",
   "parameter_txt_order": [
-    "runs/dev_20step/S04_sc_etch/params/global.txt",
-    "runs/dev_20step/S04_sc_etch/params/materials.txt",
-    "runs/dev_20step/S04_sc_etch/params/process.txt"
+    "global_params",
+    "calibration_override"
   ],
+  "parameter_txt_paths": {
+    "global_params": "runs/dev_20step/S04/parameters/global_params.txt",
+    "calibration_override": "runs/dev_20step/S04/parameters/calibration_override.txt"
+  },
   "nodes": [
     {
       "node": "sc",
       "action": "run",
       "template": "p03_SC_form",
-      "model_path": "models/process_models/sc_models/p03_SC_form.mph",
-      "component": "TODO_SC_COMPONENT",
-      "physics": "TODO_SC_PHYSICS",
-      "studies": {"stress": "TODO_SC_STRESS_STUDY", "cp": "TODO_SC_CP_STUDY"},
-      "extractors": {"rho": "TODO_RHO_EVAL", "stress": "TODO_STRESS_AVERAGE", "D": "TODO_D_MATRIX_EVAL"},
-      "inputs": {}
+      "type": "sc",
+      "inputs": {},
+      "input_parameter_txt_paths": {},
+      "output_txt_path": "runs/dev_20step/S04/outputs/sc_rve.txt",
+      "result_file": "sc_rve.json"
     },
     {
-      "node": "mat4",
+      "node": "fecap",
       "action": "run",
       "template": "fecap_model_all",
-      "model_path": "models/process_models/cap_models/fecap_model_all.mph",
-      "component": "comp8",
-      "physics": "solid8",
-      "studies": {"stress": "std4", "cp": "solid8cp1std"},
+      "type": "fecap",
       "inputs": {
-        "pillar": {"slot": "pillar", "rve": "... expanded RVE ..."},
-        "sc": {"slot": "sc", "rve": "... expanded RVE ..."}
-      }
+        "pillar": "pillar",
+        "sc": "sc",
+        "onon": "onon"
+      },
+      "input_parameter_txt_paths": {
+        "pillar": "runs/dev_20step/S04/inputs/fecap_pillar.txt",
+        "sc": "runs/dev_20step/S04/inputs/fecap_sc.txt",
+        "onon": "runs/dev_20step/S04/inputs/fecap_onon.txt"
+      },
+      "output_txt_path": "runs/dev_20step/S04/outputs/fecap_rve.txt",
+      "result_file": "fecap_rve.json"
     }
   ]
 }
@@ -1272,10 +1036,9 @@ Java 不负责：
   "exports": [],
   "manifest": {
     "model_path": "models/process_models/cap_models/fecap_model_all.mph",
-    "component": "comp8",
-    "physics": "solid8",
     "study_stress": "std4",
-    "study_cp": "solid8cp1std"
+    "study_cp": "solid8cp1std",
+    "output_txt_path": "outputs/fecap_rve.txt"
   }
 }
 ```
@@ -1289,14 +1052,12 @@ Java 不负责：
   "bow_x": 1.23e-4,
   "bow_y": 1.05e-4,
   "exports": [
-    "exports/wafer_bow.txt",
-    "exports/wafer_bow.png"
+    "outputs/wafer_result.txt"
   ],
   "manifest": {
     "model_path": "models/process_models/wafer_warp_model.mph",
-    "study": "TODO_WAFER_STUDY",
-    "bow_x_eval": "TODO_BOW_X_EVAL",
-    "bow_y_eval": "TODO_BOW_Y_EVAL"
+    "study": "std1",
+    "output_txt_path": "outputs/wafer_result.txt"
   }
 }
 ```
@@ -1582,4 +1343,4 @@ S12-S19
 
 ## 23. 最终一句话方案
 
-使用现有 Python DAG 编排框架实现 S01-S20 工艺链；S02 由 pillar/onon RVE 初始化所有层级 RVE，并将 `onon_device` 作为指定 pillar 结果的 wafer 输入 alias；后续每步按 `pillar/sc -> mat1-4 -> die -> wafer` 的层级依赖执行，只要上游 run，下游必须 run。decap mat1/2/3 输入 pillar，fecap mat4 输入 pillar+sc，die 输入 mat1-4，wafer 输入 die+onon_device。RVE stress 只保存和注入 sxx/syy，D 是否提取由 study/extractor 标签决定；无 CP study 时只更新 stress/rho，D 由 Python 从上一状态继承。每一步都 run wafer 并输出 bow，参数校准暂时关闭。
+使用现有 Python DAG 编排框架实现 S01-S20 工艺链；S02 由 pillar/onon RVE 初始化所有层级 RVE，并将 `onon_device` 作为指定 pillar 结果的 wafer 输入 alias；后续每步按 `pillar/sc -> mat1-4 -> die -> wafer` 的层级依赖执行，只要上游 run，下游必须 run。decap mat1/2/3 输入 pillar，fecap mat4 输入 pillar+sc，die 输入 mat1-4，wafer 输入 die+onon_device。RVE stress 只保存和传输 sxx/syy；D 是否更新由 COMSOL 输出 TXT 中是否包含 D11...D66 决定，无 D 输出时由 Python 从上一状态继承。每一步都 run wafer 并输出 bow，参数校准暂时关闭。

@@ -1,0 +1,28 @@
+# RVE transfer parameter template used by tests and documentation.
+# Runtime files are generated under runs/<run-id>/<step-id>/inputs/.
+# Replace <slot> with the input slot name, for example pillar, sc, die, or onon.
+
+rve_<slot>_rho       0[kg/m^3]   effective density
+rve_<slot>_sxx       0[Pa]       residual stress xx
+rve_<slot>_syy       0[Pa]       residual stress yy
+rve_<slot>_D11       0[Pa]       stiffness upper triangle
+rve_<slot>_D12       0[Pa]       stiffness upper triangle
+rve_<slot>_D13       0[Pa]       stiffness upper triangle
+rve_<slot>_D14       0[Pa]       stiffness upper triangle
+rve_<slot>_D15       0[Pa]       stiffness upper triangle
+rve_<slot>_D16       0[Pa]       stiffness upper triangle
+rve_<slot>_D22       0[Pa]       stiffness upper triangle
+rve_<slot>_D23       0[Pa]       stiffness upper triangle
+rve_<slot>_D24       0[Pa]       stiffness upper triangle
+rve_<slot>_D25       0[Pa]       stiffness upper triangle
+rve_<slot>_D26       0[Pa]       stiffness upper triangle
+rve_<slot>_D33       0[Pa]       stiffness upper triangle
+rve_<slot>_D34       0[Pa]       stiffness upper triangle
+rve_<slot>_D35       0[Pa]       stiffness upper triangle
+rve_<slot>_D36       0[Pa]       stiffness upper triangle
+rve_<slot>_D44       0[Pa]       stiffness upper triangle
+rve_<slot>_D45       0[Pa]       stiffness upper triangle
+rve_<slot>_D46       0[Pa]       stiffness upper triangle
+rve_<slot>_D55       0[Pa]       stiffness upper triangle
+rve_<slot>_D56       0[Pa]       stiffness upper triangle
+rve_<slot>_D66       0[Pa]       stiffness upper triangle
